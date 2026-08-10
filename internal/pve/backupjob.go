@@ -2,6 +2,7 @@ package pve
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -121,6 +122,70 @@ func ParseBackupRetention(s string) BackupRetention {
 	return r
 }
 
+// flexOptionString est une option que PVE rend TANTÔT comme la chaîne qu'il
+// accepte en écriture, TANTÔT comme un objet déjà éclaté.
+//
+// « prune-backups » est le cas concret : PUT /cluster/backup attend
+// « keep-daily=7,keep-weekly=2 », mais GET /cluster/backup répond
+// {"keep-daily":"7","keep-weekly":"2"} sur PVE 9.x. Déclarer le champ en
+// string faisait échouer le décodage de TOUTE la réponse, donc « backup job
+// ls » ne rendait plus un seul job face à un vrai nœud.
+//
+// Le décodage renormalise vers la forme chaîne, la seule que l'API accepte en
+// retour, pour que relire puis réécrire un job ne le déforme pas.
+type flexOptionString string
+
+func (f *flexOptionString) UnmarshalJSON(raw []byte) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		*f = ""
+		return nil
+	}
+
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return fmt.Errorf("chaîne d'options attendue, reçu %s", raw)
+		}
+		*f = flexOptionString(s)
+		return nil
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return fmt.Errorf("chaîne ou objet d'options attendu, reçu %s", raw)
+	}
+
+	// Ordre déterministe, sinon la sortie d'un --dry-run change d'une exécution
+	// à l'autre au gré du parcours de map, et deux relectures du même job ne se
+	// comparent plus.
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		// Les compteurs arrivent en nombre ou en chaîne selon l'endpoint ; %v rend
+		// les deux, mais un float JSON s'écrirait « 7 » et non « 7.0 » seulement
+		// s'il est entier, d'où la remise en forme explicite.
+		switch v := fields[k].(type) {
+		case float64:
+			pairs = append(pairs, fmt.Sprintf("%s=%d", k, int64(v)))
+		case nil:
+			continue
+		default:
+			pairs = append(pairs, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+	*f = flexOptionString(strings.Join(pairs, ","))
+	return nil
+}
+
+// String rend la forme chaîne, celle que l'API accepte en écriture.
+func (f flexOptionString) String() string { return string(f) }
+
 // BackupJob est un job tel que GET /cluster/backup le rend.
 type BackupJob struct {
 	ID       string `json:"id"`
@@ -133,15 +198,15 @@ type BackupJob struct {
 	// Enabled est un pointeur parce que son absence ne veut PAS dire 0 : le
 	// schéma déclare enabled=1 par défaut. Confondre « absent » et « désactivé »
 	// ferait afficher « inactif » sur un job qui tourne.
-	Enabled          *flexInt `json:"enabled"`
-	Mode             string   `json:"mode"`
-	Compress         string   `json:"compress"`
-	Comment          string   `json:"comment"`
-	Node             string   `json:"node"`
-	PruneBackups     string   `json:"prune-backups"`
-	MailNotification string   `json:"mailnotification"`
-	Mailto           string   `json:"mailto"`
-	NotesTemplate    string   `json:"notes-template"`
+	Enabled          *flexInt         `json:"enabled"`
+	Mode             string           `json:"mode"`
+	Compress         string           `json:"compress"`
+	Comment          string           `json:"comment"`
+	Node             string           `json:"node"`
+	PruneBackups     flexOptionString `json:"prune-backups"`
+	MailNotification string           `json:"mailnotification"`
+	Mailto           string           `json:"mailto"`
+	NotesTemplate    string           `json:"notes-template"`
 	// NextRun est un epoch en secondes. C'est la seule colonne qui prouve que le
 	// planificateur a bien pris le job : une planification que PVE n'a pas su
 	// lire n'a pas de prochaine exécution.
@@ -193,7 +258,9 @@ func (j BackupJob) Target() string {
 }
 
 // Retention relit la rétention effective du job.
-func (j BackupJob) Retention() BackupRetention { return ParseBackupRetention(j.PruneBackups) }
+func (j BackupJob) Retention() BackupRetention {
+	return ParseBackupRetention(j.PruneBackups.String())
+}
 
 // BackupJobOptions sont les paramètres de création d'un job planifié.
 type BackupJobOptions struct {

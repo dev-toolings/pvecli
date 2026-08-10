@@ -50,6 +50,17 @@ func TestEmbeddedAgentKeepsTheRulesThatCostSomething(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAgentUsesTheNativeCrossPlatformPreflight(t *testing.T) {
+	for _, must := range []string{"pvecli doctor", "config.yaml", "secret_command", "libsecret", "Keychain"} {
+		if !strings.Contains(proxmoxAgent, must) {
+			t.Errorf("la définition ne mentionne plus %q", must)
+		}
+	}
+	if strings.Contains(proxmoxAgent, "source ~/.config/pvecli/env") {
+		t.Error("le préflight ne doit pas supposer un fichier env absent sur Linux")
+	}
+}
+
 func TestAIPrintEmitsExactlyWhatIsEmbedded(t *testing.T) {
 	stdout, _, err := run(t, "ai", "print")
 	if err != nil {

@@ -481,7 +481,7 @@ func TestEmbeddedTagsAreExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"svc_caddy", "svc_cloudflared", "svc_docker", "svc_postgresql"}
+	want := []string{"svc_caddy", "svc_cloudflared", "svc_docker", "svc_php", "svc_postgresql"}
 	got := Tags(c.Services)
 	if !slices.Equal(got, want) {
 		t.Errorf("Tags(catalogue embarqué) = %v, attendu %v\n"+

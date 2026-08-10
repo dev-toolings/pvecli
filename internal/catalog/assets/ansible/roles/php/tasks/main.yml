@@ -1,0 +1,138 @@
+---
+# PHP depuis le dépôt Sury, et non depuis Debian : trixie fige PHP à 8.4 pour
+# toute la vie de la version stable. Sury est le dépôt que l'équipe PHP Debian
+# maintient elle-même, et le seul moyen d'obtenir une branche plus récente sans
+# compiler.
+#
+# ATTENTION au métapaquet : « php » y suit php-defaults, donc le défaut Debian.
+# Tout est préfixé par la branche — php8.5-cli, php8.5-mbstring — pour que la
+# version installée soit celle qui est déclarée, pas celle qu'apt choisit.
+
+# python3-debian est requis côté invité par deb822_repository, comme pour le
+# rôle docker. gnupg l'est pour que la clé binaire soit exploitable par apt.
+- name: Installer les prérequis du dépôt PHP
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gnupg, python3-debian]
+    state: present
+    update_cache: true
+
+- name: Créer le dossier des clés de dépôt
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# force: false pour la même raison que dans le rôle docker : sans lui, get_url
+# réinterroge le serveur à chaque passage et peut rapporter « changed » selon
+# les en-têtes de cache, ce qui casse la vérification d'idempotence.
+- name: Poser la clé du dépôt Sury
+  ansible.builtin.get_url:
+    url: https://packages.sury.org/php/apt.gpg
+    dest: /etc/apt/keyrings/sury-php.gpg
+    mode: "0644"
+    force: false
+
+- name: Déclarer le dépôt Sury
+  ansible.builtin.deb822_repository:
+    name: sury-php
+    types: [deb]
+    uris: https://packages.sury.org/php
+    suites: "{{ ansible_distribution_release }}"
+    components: [main]
+    architectures: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+    signed_by: /etc/apt/keyrings/sury-php.gpg
+    enabled: true
+    state: present
+
+- name: Installer PHP et ses extensions
+  ansible.builtin.apt:
+    name: >-
+      {{ ['php' ~ pvecli_php_version ~ '-cli']
+         + (['php' ~ pvecli_php_version ~ '-fpm'] if pvecli_php_fpm else [])
+         + pvecli_php_extensions
+           | map('regex_replace', '^', 'php' ~ pvecli_php_version ~ '-')
+           | list }}
+    state: present
+    update_cache: true
+
+- name: Démarrer PHP-FPM au boot
+  ansible.builtin.service:
+    name: "php{{ pvecli_php_version }}-fpm"
+    state: started
+    enabled: true
+  when: pvecli_php_fpm
+
+# Composer ne vient pas d'apt : le paquet Debian retarde d'une version majeure
+# entière. L'installateur officiel est vérifié contre la somme que composer.org
+# publie séparément — télécharger et exécuter sans cette étape, c'est accepter
+# n'importe quel binaire que le réseau veut bien rendre.
+# Tout ce bloc est gardé par la présence du binaire final. « creates: » sur la
+# seule tâche d'installation ne suffisait pas : le téléchargement et la
+# suppression de l'installateur, eux, s'exécutaient à chaque passage et
+# rapportaient « changed » pour toujours. Une tâche qui rapporte un changement
+# alors que rien n'a changé fait échouer « iac configure --idempotence », et,
+# plus grave, elle rend le rapport d'Ansible illisible : on cesse de regarder
+# les « changed » quand deux d'entre eux sont du bruit permanent.
+- name: Vérifier si Composer est déjà installé
+  ansible.builtin.stat:
+    path: /usr/local/bin/composer
+  register: pvecli_composer_binary
+
+- name: Installer Composer
+  when: not pvecli_composer_binary.stat.exists
+  block:
+    - name: Lire la somme de contrôle publiée de l'installateur Composer
+      ansible.builtin.uri:
+        url: https://composer.github.io/installer.sig
+        return_content: true
+      register: pvecli_composer_sig
+      changed_when: false
+
+    - name: Télécharger l'installateur Composer, somme vérifiée
+      ansible.builtin.get_url:
+        url: https://getcomposer.org/installer
+        dest: /tmp/composer-setup.php
+        checksum: "sha384:{{ pvecli_composer_sig.content | trim }}"
+        mode: "0644"
+
+    - name: Poser le binaire Composer
+      ansible.builtin.command:
+        cmd: >-
+          php{{ pvecli_php_version }} /tmp/composer-setup.php
+          --install-dir=/usr/local/bin --filename=composer
+        creates: /usr/local/bin/composer
+
+  always:
+    # « always » et non une tâche à la suite : si le téléchargement ou la somme
+    # échouent, l'installateur ne doit pas rester derrière. Même raison que le
+    # « trap » qui manquait au déploiement de hermes.
+    - name: Retirer l'installateur
+      ansible.builtin.file:
+        path: /tmp/composer-setup.php
+        state: absent
+      changed_when: false
+
+# Le paquet installé ne dit pas que le binaire répond. Ces deux relectures sont
+# la seule preuve que la version déclarée est bien celle qui s'exécute.
+- name: Relire la version de PHP réellement installée
+  ansible.builtin.command:
+    cmd: php{{ pvecli_php_version }} -r "echo PHP_VERSION;"
+  register: pvecli_php_installed
+  changed_when: false
+
+- name: Relire la version de Composer réellement installée
+  ansible.builtin.command:
+    cmd: /usr/local/bin/composer --version --no-ansi
+  register: pvecli_composer_installed
+  changed_when: false
+
+- name: Publier les sorties
+  ansible.builtin.include_role:
+    name: pvecli_publish
+  vars:
+    pvecli_publish_service: php
+    pvecli_publish_values:
+      php: "{{ pvecli_php_installed.stdout }}"
+      php.binary: "/usr/bin/php{{ pvecli_php_version }}"
+      php.fpm.socket: "{{ '/run/php/php' ~ pvecli_php_version ~ '-fpm.sock' if pvecli_php_fpm else 'non installé' }}"
+      composer: "{{ pvecli_composer_installed.stdout_lines[0] | default('') }}"

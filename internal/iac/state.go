@@ -216,6 +216,19 @@ func declaredFrom(r stateResource) Declared {
 	if d.Cores == 0 {
 		d.Cores = intOf(v["cpu_cores"])
 	}
+
+	// A container's `disk` block carries no `interface`, because the schema has
+	// none: a container has exactly one root disk, and PVE names it `rootfs`.
+	// LiveFromPVE already keys it that way. Without this, the declared disk is
+	// looked up under "" — a key the live side can never hold — and every
+	// container is reported as missing a disk it plainly has.
+	if d.IsContainer() {
+		for i := range d.Disks {
+			if d.Disks[i].Interface == "" {
+				d.Disks[i].Interface = "rootfs"
+			}
+		}
+	}
 	sort.Strings(d.Tags)
 	return d
 }

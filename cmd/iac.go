@@ -143,7 +143,7 @@ Endpoints : GET /api2/json/cluster/resources
 			defer cleanup()
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "inventaire temporaire : %s (%d hôte(s))\n", path, len(inv.Hosts))
 
-			if err := pingHosts(cmd, ping, path); err != nil {
+			if err := pingHosts(cmd, ping, path, limit); err != nil {
 				return err
 			}
 
@@ -298,12 +298,23 @@ func writeTempInventory(inv *iac.Inventory, endpoint string) (path string, clean
 }
 
 // pingHosts refuses to start a run whose hosts are not all reachable.
-func pingHosts(cmd *cobra.Command, ping iac.Tool, inventory string) error {
+//
+// Le pré-vol porte le MÊME --limit que le playbook. Sans lui, il interrogeait
+// l'inventaire entier : une VM éteinte, sans rapport avec le run demandé,
+// suffisait à interdire un « --limit une-seule-machine » parfaitement joignable.
+// Un garde-fou qui bloque des runs sains finit contourné, ce qui coûte plus
+// cher que ce qu'il protège.
+func pingHosts(cmd *cobra.Command, ping iac.Tool, inventory, limit string) error {
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\npré-vol : ansible -m ping\n")
+
+	args := []string{"-i", inventory, "all", "-m", "ping"}
+	if limit != "" {
+		args = append(args, "--limit", limit)
+	}
 
 	var buf strings.Builder
 	out := io.MultiWriter(cmd.ErrOrStderr(), &buf)
-	runErr := ping.Run(cmd.Context(), out, out, "-i", inventory, "all", "-m", "ping")
+	runErr := ping.Run(cmd.Context(), out, out, args...)
 
 	// An ad-hoc run prints no PLAY RECAP — that banner belongs to
 	// ansible-playbook — so this output has its own parser.
@@ -329,6 +340,11 @@ func pingHosts(cmd *cobra.Command, ping iac.Tool, inventory string) error {
 	// Zero answers is not success. Without this, an inventory ansible could not
 	// parse would sail through the pre-check that exists to stop it.
 	if len(pings) == 0 {
+		if limit != "" {
+			return fmt.Errorf("aucun hôte n'a répondu au ping, et aucun n'a échoué non plus :\n"+
+				"« --limit %s » ne désigne probablement aucun hôte de l'inventaire\n"+
+				"  · relis les noms et les groupes : pvecli iac inventory", limit)
+		}
 		return fmt.Errorf("aucun hôte n'a répondu au ping, et aucun n'a échoué non plus :\n" +
 			"ansible n'a probablement rien lu dans l'inventaire généré")
 	}
@@ -404,25 +420,35 @@ func verifyHosts(cmd *cobra.Command, inv *iac.Inventory, template, want string) 
 // in the history forever. The provider wants the whole credential in one
 // string, « <token-id>=<secret> ».
 //
+// The bpg/proxmox provider exposes `insecure`, but not a CA-file setting. The
+// provider is a Go process and its system certificate pool honours
+// SSL_CERT_FILE on Unix, so pass the operator-configured CA only to that child
+// process. This keeps verification enabled and makes Terraform use the same
+// trust material as pvecli, while leaving the caller's environment untouched.
+//
 // An operator who has already exported the variable keeps their value: they
 // may well be driving Terraform with a different, more privileged identity
 // than the one pvecli reads with, and silently substituting ours would be a
 // surprise in the one place surprises are expensive.
 func terraformEnv(cmd *cobra.Command, eff *config.Effective) []string {
 	const varName = "TF_VAR_proxmox_api_token"
+	var env []string
 
 	if existing := os.Getenv(varName); existing != "" {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"%s est déjà exporté : pvecli le laisse tel quel et n'impose pas son propre token.\n", varName)
-		return nil
-	}
-	if eff.TokenSecret == "" {
+	} else if eff.TokenSecret == "" {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"aucun secret de token : terraform devra trouver ses identifiants lui-même.\n"+
 				"  export %s=…\n", config.EnvTokenSecret)
-		return nil
+	} else {
+		env = append(env, fmt.Sprintf("%s=%s=%s", varName, eff.TokenID, eff.TokenSecret))
 	}
-	return []string{fmt.Sprintf("%s=%s=%s", varName, eff.TokenID, eff.TokenSecret)}
+
+	if eff.TLS.CAFile != "" {
+		env = append(env, "SSL_CERT_FILE="+eff.TLS.CAFile)
+	}
+	return env
 }
 
 // warnIfTokenInTfvars looks for the mistake this project refuses to make in its

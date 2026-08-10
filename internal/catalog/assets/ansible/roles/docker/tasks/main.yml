@@ -50,6 +50,41 @@
     state: present
     update_cache: true
 
+# Le pilote de journaux par défaut n'a AUCUNE borne : un conteneur bavard
+# remplit le disque de l'hôte sans que « docker system df » n'en dise un mot.
+# Les trois tâches ci-dessous FUSIONNENT la rotation dans daemon.json au lieu
+# de l'écraser -- un fichier existant porte souvent un « bip », des pools
+# d'adresses ou des ulimits que deux lignes de rotation ne doivent pas emporter.
+- name: Lire le daemon.json existant, s'il y en a un
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: pvecli_docker_daemon_current
+  failed_when: false
+  changed_when: false
+
+- name: Construire le daemon.json fusionné
+  ansible.builtin.set_fact:
+    pvecli_docker_daemon_merged: >-
+      {{ (pvecli_docker_daemon_current.content | default('') | length > 0)
+         | ternary(pvecli_docker_daemon_current.content | default('') | b64decode | from_json, {})
+         | combine({
+             'log-driver': 'json-file',
+             'log-opts': {
+               'max-size': pvecli_docker_log_max_size,
+               'max-file': pvecli_docker_log_max_file,
+             },
+           }, pvecli_docker_daemon_extra, recursive=true) }}
+
+# to_nice_json trie les clés, ce qui rend le rendu stable d'un passage à
+# l'autre : sans ce tri, l'ordre d'un dictionnaire suffirait à rapporter un
+# « changed » perpétuel et à redémarrer Docker à chaque exécution.
+- name: Poser la rotation des journaux de conteneurs
+  ansible.builtin.copy:
+    content: "{{ pvecli_docker_daemon_merged | to_nice_json }}\n"
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+  notify: Redémarrer Docker
+
 - name: Démarrer Docker au boot
   ansible.builtin.service:
     name: docker

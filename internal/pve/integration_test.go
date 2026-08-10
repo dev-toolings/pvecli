@@ -75,7 +75,7 @@ func liveClient(t *testing.T) (*Client, string) {
 
 	eff := liveConfig(t)
 	if eff.Endpoint == "" || eff.TokenID == "" || eff.TokenSecret == "" {
-		t.Skip("endpoint / token_id / PVE_API_TOKEN_SECRET absents — source ~/.config/pvecli/env")
+		t.Skip("endpoint / token_id / secret absents — configure pvecli puis lance pvecli doctor")
 	}
 
 	node := eff.Node

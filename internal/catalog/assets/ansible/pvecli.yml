@@ -42,3 +42,10 @@
   gather_facts: true
   roles:
     - cloudflared
+
+- name: PHP et Composer
+  hosts: svc_php
+  become: true
+  gather_facts: true
+  roles:
+    - php

@@ -1,0 +1,18 @@
+---
+# Rotation des journaux de conteneurs.
+#
+# Le pilote « json-file » de Docker écrit SANS AUCUNE BORNE par défaut : un
+# conteneur bavard remplit le disque de l'hôte, lentement, jusqu'à le casser.
+# C'est la deuxième cause d'engorgement d'une machine Docker, après les images
+# oubliées, et la seule qui ne se voit dans aucun « docker system df ».
+#
+# 10 Mo x 3 fichiers = 30 Mo plafonnés par conteneur. Mêmes valeurs que le VPS
+# de production, où elles se sont montrées suffisantes.
+pvecli_docker_log_max_size: "10m"
+pvecli_docker_log_max_file: "3"
+
+# Clés supplémentaires à fusionner dans daemon.json. Le rôle FUSIONNE au lieu
+# d'écraser : un daemon.json existant peut porter un « bip », des pools
+# d'adresses ou des ulimits que personne ne veut perdre en posant deux lignes
+# de rotation.
+pvecli_docker_daemon_extra: {}

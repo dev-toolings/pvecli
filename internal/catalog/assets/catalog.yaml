@@ -64,3 +64,21 @@ services:
         value: "{{ pvecli_caddy_version }}"
       - key: caddy.conf_dir
         value: "{{ pvecli_caddy_conf_dir }}"
+
+  - id: php
+    summary: PHP 8.5 depuis Sury, avec FPM, les extensions courantes et Composer
+    role: php
+    # Pas de `ports:` : php-fpm écoute sur un socket UNIX, pas sur le réseau.
+    # Déclarer un port serait décrire une ouverture qui n'existe pas.
+    outputs:
+      - key: php
+        # « php -r echo PHP_VERSION », relu côté invité après installation :
+        # la version du paquet et celle qui s'exécute ne sont pas la même
+        # affirmation.
+        value: "{{ pvecli_php_version }}"
+      - key: php.binary
+        value: "{{ pvecli_php_binary }}"
+      - key: php.fpm.socket
+        value: "{{ pvecli_php_fpm_socket }}"
+      - key: composer
+        value: "{{ pvecli_composer_version }}"

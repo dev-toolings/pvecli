@@ -1,0 +1,13 @@
+---
+# Redémarrer le démon redémarre TOUS les conteneurs de l'hôte. C'est un
+# handler, donc il ne se déclenche que si daemon.json a réellement changé :
+# rejouer le rôle sur une machine déjà configurée ne coupe rien.
+#
+# ⚠️ Ce redémarrage ne suffit pas à borner les journaux DÉJÀ ouverts :
+# « log-opts » ne s'applique qu'aux conteneurs CRÉÉS ensuite. Les conteneurs
+# existants gardent leur journal sans borne jusqu'à leur recréation
+# (« docker compose up -d --force-recreate »).
+- name: Redémarrer Docker
+  ansible.builtin.service:
+    name: docker
+    state: restarted

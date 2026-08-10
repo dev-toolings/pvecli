@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/dev-toolings/pvecli/internal/pve"
 )
 
 // stubTerraform puts a fake `terraform` first in PATH.
@@ -325,5 +327,63 @@ func TestUninitialisedDirectoryPointsAtTerraformInit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "terraform init") {
 		t.Errorf("le message doit mentionner l'initialisation : %v", err)
+	}
+}
+
+// A container's `disk` block has no `interface`: the provider schema does not
+// define one, because a container has exactly one root disk. LiveFromPVE keys
+// that disk as `rootfs`, so a declared disk left with an empty interface is
+// looked up under "" — a key the live side can never hold — and the container
+// is reported as missing the disk it plainly has.
+//
+// Observed on the lab's own 221 and 222 right after their adoption: « disk
+// (vide) · déclaré 20 Gio sur local-lvm · réel absent », on two containers
+// whose rootfs was present and correct. A drift report that cries wolf on
+// healthy resources stops being read, which costs more than the false line.
+func TestAContainerDiskIsKeyedAsRootfs(t *testing.T) {
+	d := declaredFrom(stateResource{
+		Address: `proxmox_virtual_environment_container.infra_01`,
+		Mode:    "managed",
+		Type:    TypeContainer,
+		Values: map[string]any{
+			"vm_id": float64(221),
+			"disk":  []any{map[string]any{"datastore_id": "local-lvm", "size": float64(20)}},
+		},
+	})
+
+	if len(d.Disks) != 1 {
+		t.Fatalf("un disque attendu : %+v", d.Disks)
+	}
+	if d.Disks[0].Interface != "rootfs" {
+		t.Errorf("le disque d'un conteneur doit être comparé sous « rootfs », reçu %q", d.Disks[0].Interface)
+	}
+
+	// The point of the mapping is that the comparison then finds nothing to
+	// report. Asserting on the field alone would pass on a mapping to any
+	// constant.
+	live := LiveFromPVE(
+		pve.Resource{VMID: 221, Node: "pve"},
+		pve.GuestConfig{"rootfs": "local-lvm:vm-221-disk-0,size=20G"},
+	)
+	if got := diff(d, live); len(got) != 0 {
+		t.Errorf("un conteneur sain ne doit produire aucune dérive : %+v", got)
+	}
+}
+
+// The same state, read as a VM, must keep naming its disk by the interface the
+// provider gives it. The container mapping is a special case, not a default.
+func TestAVMDiskKeepsItsDeclaredInterface(t *testing.T) {
+	d := declaredFrom(stateResource{
+		Address: `proxmox_virtual_environment_vm.pvecli["app"]`,
+		Mode:    "managed",
+		Type:    TypeVM,
+		Values: map[string]any{
+			"vm_id": float64(210),
+			"disk":  []any{map[string]any{"interface": "scsi0", "datastore_id": "local-lvm", "size": float64(20)}},
+		},
+	})
+
+	if len(d.Disks) != 1 || d.Disks[0].Interface != "scsi0" {
+		t.Errorf("l'interface déclarée d'une VM ne doit pas être réécrite : %+v", d.Disks)
 	}
 }

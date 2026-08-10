@@ -1,11 +1,16 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/dev-toolings/pvecli/internal/config"
+	"github.com/dev-toolings/pvecli/internal/iac"
 	"github.com/dev-toolings/pvecli/internal/pve"
 	"github.com/dev-toolings/pvecli/internal/testutil"
 )
@@ -256,6 +261,33 @@ func TestTheTokenReachesTerraformThroughTheEnvironmentOnly(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("pvecli n'écrit rien dans le dossier terraform : %v", entries)
+	}
+}
+
+// The bpg/proxmox provider has no ca_file attribute. pvecli must therefore
+// pass the configured CA to Terraform through Go's standard SSL_CERT_FILE
+// trust-pool hook, while keeping verification enabled.
+func TestConfiguredCAReachesTerraformWithoutDisablingTLS(t *testing.T) {
+	t.Setenv("TF_VAR_proxmox_api_token", "")
+	t.Setenv("SSL_CERT_FILE", "/a/different/ca.pem")
+
+	c := &cobra.Command{}
+	c.SetErr(io.Discard)
+	env := terraformEnv(c, &config.Effective{
+		TokenID:     "automation@pve!pvectl",
+		TokenSecret: "s3cr3t",
+		TLS:         config.TLS{CAFile: "/etc/pve/pve-root-ca.pem"},
+	})
+	got := strings.Join(env, "\n")
+
+	if !strings.Contains(got, "SSL_CERT_FILE=/etc/pve/pve-root-ca.pem") {
+		t.Errorf("la CA configurée doit atteindre Terraform : %s", got)
+	}
+	if !strings.Contains(got, "TF_VAR_proxmox_api_token=automation@pve!pvectl=s3cr3t") {
+		t.Errorf("le token doit continuer à atteindre Terraform : %s", got)
+	}
+	if strings.Contains(got, "insecure=true") {
+		t.Errorf("le correctif TLS ne doit pas désactiver la vérification : %s", got)
 	}
 }
 
@@ -532,5 +564,55 @@ func TestExcludedContainersSayWhatWasReadInTheirConfiguration(t *testing.T) {
 		if strings.Contains(stdout, "vmid: "+vmid) {
 			t.Errorf("le conteneur %s exclu ne doit pas figurer dans le document", vmid)
 		}
+	}
+}
+
+// Le pré-vol doit porter le même --limit que le playbook.
+//
+// Observé sur le lab : « iac configure --limit hermes-ephemeral-01 » refusait
+// de démarrer parce que 220 et 221, hors sujet, ne répondaient pas en SSH. Le
+// ping interrogeait « all » en dur, donc n'importe quelle machine éteinte de
+// l'inventaire interdisait un run visant une seule VM parfaitement joignable.
+// Un garde-fou qui bloque des runs sains finit contourné.
+func TestThePreflightPingCarriesTheSameLimitAsThePlaybook(t *testing.T) {
+	calls := stubTool(t, "ansible", `hermes-ephemeral-01 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}`)
+
+	c := &cobra.Command{}
+	c.SetContext(t.Context())
+	c.SetErr(io.Discard)
+	if err := pingHosts(c, iac.Tool{Name: "ansible"}, "/tmp/inv.yml", "hermes-ephemeral-01"); err != nil {
+		t.Fatalf("pré-vol : %v", err)
+	}
+
+	body, err := os.ReadFile(calls) //nolint:gosec // path built by the test
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "--limit hermes-ephemeral-01") {
+		t.Errorf("le --limit du run doit atteindre le ping :\n%s", body)
+	}
+}
+
+// Sans --limit, rien ne change : le pré-vol interroge tout l'inventaire.
+// La restriction est une réponse à une demande explicite, pas un défaut.
+func TestThePreflightPingWithoutLimitStillAsksEveryHost(t *testing.T) {
+	calls := stubTool(t, "ansible", `edge-01 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}`)
+
+	c := &cobra.Command{}
+	c.SetContext(t.Context())
+	c.SetErr(io.Discard)
+	if err := pingHosts(c, iac.Tool{Name: "ansible"}, "/tmp/inv.yml", ""); err != nil {
+		t.Fatalf("pré-vol : %v", err)
+	}
+
+	body, _ := os.ReadFile(calls) //nolint:gosec // path built by the test
+	if strings.Contains(string(body), "--limit") {
+		t.Errorf("sans --limit demandé, le ping ne doit en poser aucun :\n%s", body)
 	}
 }

@@ -1,0 +1,28 @@
+---
+# La BRANCHE PHP installée, explicitement.
+#
+# « la dernière version » n'est pas quelque chose qu'apt sait résoudre seul. Le
+# métapaquet « php » de Sury suit php-defaults, qui suit le défaut de la
+# distribution : sur trixie il rend 8.4, pas la dernière branche publiée.
+# Installer « php » en croyant obtenir « latest » est le piège que ce fichier
+# existe pour éviter. La version est donc écrite, et se change ici.
+pvecli_php_version: "8.5"
+
+# Extensions posées avec le cœur. Chacune devient php{{ version }}-{{ nom }}.
+# Le choix couvre ce qu'un Symfony ou un Laravel réclame au premier démarrage ;
+# au-delà, on ajoute au cas par cas plutôt que d'installer par précaution.
+pvecli_php_extensions:
+  - mbstring
+  - xml
+  - curl
+  - zip
+  - intl
+  - gd
+  - bcmath
+  - pgsql
+  - mysql
+
+# FPM n'a de sens que derrière un serveur web. Une VM qui ne sert que des
+# commandes n'en a pas besoin, et un service qui écoute sans raison est une
+# surface d'attaque gratuite.
+pvecli_php_fpm: true

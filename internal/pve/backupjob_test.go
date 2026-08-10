@@ -206,6 +206,50 @@ func TestBackupJobsHitsTheClusterEndpoint(t *testing.T) {
 	}
 }
 
+func TestBackupJobDecodesPruneBackupsRenderedAsAnObject(t *testing.T) {
+	// Regression : PVE 9.x rend « prune-backups » en OBJET sur GET, alors qu'il
+	// l'accepte en chaîne sur PUT. Le champ était déclaré string, donc le
+	// décodage de la réponse ENTIÈRE échouait et « backup job ls » ne rendait
+	// aucun job face à un vrai nœud. Les fixtures n'employaient que la forme
+	// chaîne, d'où un test vert sur un binaire cassé.
+	c, _ := jobServer(t, func(*http.Request) string {
+		return `{"data":[{"id":"vzdump-obj","schedule":"02:30","storage":"local",
+			"vmid":"221,222","prune-backups":{"keep-daily":"7","keep-weekly":"2"}}]}`
+	})
+
+	jobs, err := c.BackupJobs(context.Background())
+	if err != nil {
+		t.Fatalf("BackupJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %d, attendu 1", len(jobs))
+	}
+	if r := jobs[0].Retention(); r.Daily != 7 || r.Weekly != 2 {
+		t.Fatalf("rétention = %+v", r)
+	}
+	// Renormalisée vers la forme chaîne : relire puis réécrire ne doit pas
+	// déformer le job.
+	if got := jobs[0].PruneBackups.String(); got != "keep-daily=7,keep-weekly=2" {
+		t.Fatalf("prune-backups = %q", got)
+	}
+}
+
+func TestBackupJobStillDecodesPruneBackupsAsAString(t *testing.T) {
+	// L'autre moitié du contrat : la forme chaîne reste acceptée, sinon la
+	// correction ci-dessus casserait les nœuds qui la rendent ainsi.
+	c, _ := jobServer(t, func(*http.Request) string {
+		return `{"data":[{"id":"vzdump-str","prune-backups":"keep-last=3,keep-daily=7"}]}`
+	})
+
+	jobs, err := c.BackupJobs(context.Background())
+	if err != nil {
+		t.Fatalf("BackupJobs: %v", err)
+	}
+	if r := jobs[0].Retention(); r.Last != 3 || r.Daily != 7 {
+		t.Fatalf("rétention = %+v", r)
+	}
+}
+
 func TestBackupJobByIDFillsBackTheIdentifier(t *testing.T) {
 	// La réponse ne répète pas toujours l'id : l'appelant l'a demandé. Le
 	// laisser vide ferait afficher un job anonyme, impossible à modifier.

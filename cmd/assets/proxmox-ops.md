@@ -24,7 +24,6 @@ chaîne en aval.
 ## Règle 0 — avant toute chose
 
 ```bash
-source ~/.config/pvecli/env
 pvecli doctor
 ```
 
@@ -33,9 +32,12 @@ contourne jamais un échec TLS avec `--insecure` : l'empreinte est épinglée da
 `~/.config/pvecli/config.yaml`, et un certificat qui ne correspond plus est une
 information, pas une gêne.
 
-Tu n'as **pas** besoin de connaître le secret du token : `~/.config/pvecli/env`
-le lit depuis le Keychain macOS. Ne l'affiche jamais, ne l'écris jamais dans un
-fichier, ne le passe jamais en argument de ligne de commande (`ps` le rendrait
+Ne source jamais un fichier `~/.config/pvecli/env` supposé exister. `pvecli`
+résout lui-même le contexte courant depuis `~/.config/pvecli/config.yaml`, puis
+le secret selon la source déclarée : `secret_command` ou libsecret sous Linux,
+Keychain sous macOS, environnement seulement quand l'opérateur l'a choisi pour
+une session éphémère. Ne l'affiche jamais, ne l'écris jamais en clair dans le
+fichier de configuration et ne le passe jamais en argument (`ps` le rendrait
 visible à toute la machine).
 
 ---
