@@ -263,7 +263,10 @@ func LiveFromPVE(r pve.Resource, cfg pve.GuestConfig) Live {
 
 	for _, key := range diskKeys(cfg) {
 		opt := pve.ParseOptionString(cfg.String(key))
-		datastore, _, _ := strings.Cut(opt.Value, ":")
+		// QEMU disks use the volume as the positional value. LXC rootfs
+		// returns it as `volume=...` alongside keyed options instead.
+		source := firstNonEmpty(opt.Value, opt.Get("volume"))
+		datastore, _, _ := strings.Cut(source, ":")
 		l.Disks[key] = LiveDisk{Datastore: datastore, SizeGiB: sizeToGiB(opt.Get("size"))}
 	}
 
@@ -305,19 +308,21 @@ func sizeToGiB(size string) int {
 		return 0
 	}
 	unit := size[len(size)-1]
-	n, err := strconv.Atoi(strings.TrimRight(size, "KMGTkmgt"))
+	n, err := strconv.ParseInt(strings.TrimRight(size, "KMGTkmgt"), 10, 64)
 	if err != nil {
 		return 0
 	}
 	switch unit {
 	case 'T', 't':
-		return n * 1024
+		return int(n * 1024)
 	case 'G', 'g':
-		return n
+		return int(n)
 	case 'M', 'm':
-		return n / 1024
+		return int(n / 1024)
 	default:
-		return 0
+		// LXC rootfs reports `size` as bytes, unlike QEMU's human-readable
+		// `20G` form.
+		return int(n / (1 << 30))
 	}
 }
 

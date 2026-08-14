@@ -197,6 +197,21 @@ func TestAContainerIsReadWithItsOwnKeys(t *testing.T) {
 	}
 }
 
+// LXC rootfs uses keyed `volume` and byte-sized `size` options. Treating it
+// like a QEMU disk makes every managed container look modified forever.
+func TestAnLXCProvisionedRootfsIsReadFromKeyedOptions(t *testing.T) {
+	cfg := pve.GuestConfig{
+		"hostname": "infra-01",
+		"rootfs":   "acl=0,size=64424509440,quota=0,replicate=0,volume=local-lvm:vm-221-disk-0",
+	}
+
+	l := LiveFromPVE(pve.Resource{VMID: 221, Node: "pve"}, cfg)
+
+	if d := l.Disks["rootfs"]; d.Datastore != "local-lvm" || d.SizeGiB != 60 {
+		t.Errorf("rootfs LXC mal lu : %+v", d)
+	}
+}
+
 // An attribute PVE never wrote and one it wrote to 0 are different statements.
 // Terraform declaring on_boot = false against a missing key is not a drift.
 func TestAnAbsentOnBootIsNotAFalseOnBoot(t *testing.T) {
