@@ -1501,3 +1501,50 @@ resserrer le test aurait été invérifiable, exactement le défaut qu'il corrig
 **Règle retenue** — un test de couverture qui ne peut pas échouer documente une
 intention, pas un fait. Avant de croire qu'un resserrement a servi, il faut
 l'avoir vu refuser quelque chose.
+
+## 2026-08-11 — la mémoire d'un invité, et le chiffre qui la décrit mal
+
+**Le symptôme.** `guest ls` annonçait `6.0 GiB / 6.0 GiB` sur une VM Docker au
+repos, charge à 0.04, aucun incident. Trois VM sur quatre affichaient la même
+saturation. Le réflexe qu'appelle cet écran, chercher une fuite mémoire, est le
+mauvais.
+
+**D'où vient le chiffre.** `mem` n'est pas lu dans l'invité : il est dérivé de
+virtio-balloon, `total_mem` moins `free_mem`. Le cache de pages y compte donc
+comme occupé, et un hôte à conteneurs sain lit toujours 100 %. Vérifié à l'octet
+près sur la 250 : `6 220 021 760 − 196 714 496 = 6 023 307 264`, exactement le
+`mem` renvoyé, et exactement le `MemTotal − MemFree` du `/proc/meminfo` invité.
+
+**Ce qui manque, et pourquoi.** `MemAvailable`, la seule valeur qui répondrait à
+la question posée, ne traverse pas la frontière virtio. Le bloc `ballooninfo`
+porte `total_mem`, `free_mem`, `max_mem` et les compteurs de swap, rien d'autre.
+Le protocole définit pourtant un compteur `VIRTIO_BALLOON_S_AVAIL` alimenté par
+le noyau invité : PVE ne le propage pas. Non vérifié côté QEMU.
+
+**Ce que l'API porte quand même**, dans la réponse que `show` lit déjà, donc
+sans appel supplémentaire : `freemem`, `memhost` (ce que le process QEMU occupe
+vraiment sur le nœud, proche de `maxmem` parce qu'une page touchée est une page
+allouée pour de bon) et surtout `pressurememorysome` / `pressurememoryfull`, le
+PSI du cgroup. Le PSI est le seul de ces chiffres qui dise si la mémoire fait
+souffrir l'invité. Sur la 250 il vaut zéro, ce qui referme le dossier.
+
+**La surprise du jour, dans la même famille que le lot M6.** `status/current`
+renvoie le PSI en **nombre** sur QEMU et en **chaîne** sur LXC : `0` d'un côté,
+`"0.00"` de l'autre. Même champ, même nœud 9.2.6. Un décodage strict en
+`float64` passe sur les VM et casse sur les conteneurs, soit la pire répartition
+possible, puisque la commande marche là où on la teste en premier. D'où
+`flexFloat`, jumeau du `flexInt` de PVX-041, et une fixture LXC capturée en
+fonctionnement plutôt qu'à l'arrêt : `lxc-status-managed.json` décrivait un
+conteneur `stopped`, qui ne rapporte aucun PSI et n'aurait rien attrapé.
+
+**Ce qui a été écarté.** Une colonne PSI dans `guest ls` : l'index
+`GET /nodes/{node}/qemu` ne porte aucun de ces champs, il faudrait un
+`status/current` par invité et transformer un `ls` en N+1. Un seuil d'alerte sur
+`mem/maxmem` : il serait faux par construction, puisqu'il vaut ~100 % sur toute
+VM à conteneurs en bonne santé.
+
+**Règle retenue** — un ratio dérivé n'est pas une mesure. Avant d'afficher
+`x / y` comme un taux d'occupation, il faut savoir qui a fait la soustraction,
+avec quelles données, et si la question de l'opérateur porte sur le même
+référentiel. Ici l'hyperviseur répond « ce que j'ai donné », l'opérateur demande
+« ce qu'il reste », et les deux ont raison.

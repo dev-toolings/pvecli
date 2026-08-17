@@ -194,7 +194,53 @@ type GuestStatus struct {
 	// Agent is 1 when the QEMU guest agent is declared in the config. It says
 	// nothing about whether it is actually answering.
 	Agent int `json:"agent,omitempty"`
+
+	// FreeMem is the guest's own MemFree, relayed by the virtio-balloon driver.
+	// It is the counterweight to Mem, which PVE computes as total_mem minus
+	// free_mem: the guest's page cache is therefore counted as used, and any
+	// healthy container host reads as full. MemAvailable, the one figure that
+	// would answer "is it actually tight?", never crosses the virtio boundary.
+	FreeMem int64 `json:"freemem,omitempty"`
+
+	// MemHost is what the QEMU process really occupies on the node. Once the
+	// guest touches a page, the host allocates it for good and cannot take it
+	// back short of inflating the balloon, so this stays near MaxMem even when
+	// the guest considers the page reclaimable. Absent on LXC.
+	MemHost int64 `json:"memhost,omitempty"`
+
+	// PressureMemorySome and PressureMemoryFull are the cgroup's memory PSI
+	// counters, in percent of time stalled. They are the only fields here that
+	// say whether memory hurts. Pointers, because zero is their normal reading
+	// and "no pressure" must not be indistinguishable from "not reported".
+	PressureMemorySome *flexFloat `json:"pressurememorysome,omitempty"`
+	PressureMemoryFull *flexFloat `json:"pressurememoryfull,omitempty"`
 }
+
+// flexFloat is a number PVE answers as a JSON number from one endpoint and as
+// a quoted string from another.
+//
+// Observed on the lab, on the very same field: GET …/qemu/250/status/current
+// returns {"pressurememorysome":0}, while …/lxc/221/status/current returns
+// {"pressurememorysome":"0.00"}. A strict float decode fails on containers
+// only, so the bug hides behind whichever guest type gets tested first.
+type flexFloat float64
+
+func (f *flexFloat) UnmarshalJSON(raw []byte) error {
+	text := strings.Trim(string(raw), `"`)
+	if text == "" || text == "null" {
+		*f = 0
+		return nil
+	}
+	v, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return fmt.Errorf("nombre attendu, reçu %s", raw)
+	}
+	*f = flexFloat(v)
+	return nil
+}
+
+// Float returns the value as a plain float.
+func (f flexFloat) Float() float64 { return float64(f) }
 
 // GuestStatus reads a guest's current runtime state.
 //

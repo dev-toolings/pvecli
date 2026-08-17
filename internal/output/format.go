@@ -55,6 +55,14 @@ func Ratio(r float64) string {
 	return fmt.Sprintf("%.1f %%", r*100)
 }
 
+// Percent renders a value PVE already expresses in percent, such as the PSI
+// pressure counters. It is deliberately NOT Ratio: feeding a 0..100 figure to
+// Ratio multiplies it by another hundred, and the result stays plausible on an
+// idle guest, where every pressure counter is zero either way.
+func Percent(p float64) string {
+	return fmt.Sprintf("%.2f %%", p)
+}
+
 // Timestamp renders a Unix time as a short local date-time. PVE answers epoch
 // seconds everywhere.
 func Timestamp(sec int64) string {

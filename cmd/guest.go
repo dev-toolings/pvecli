@@ -244,6 +244,46 @@ montrée.
 	return c
 }
 
+// guestMemoryCell spells out what the bare ratio hides.
+//
+// PVE derives `mem` from virtio-balloon as total_mem minus free_mem, so the
+// guest's page cache counts as used. A Docker host at rest therefore reads as
+// 6.0 / 6.0 GiB, which looks like an incident and is not one. The suffix adds
+// the three figures that settle the question: what the guest itself calls free,
+// what the node really hands out (high for the same reason, since a touched
+// page is an allocated page), and the memory PSI, the only counter that says
+// whether the guest is actually starved.
+//
+// Every field comes from the status/current response the command already
+// fetches, so the line costs no extra call. LXC reports none of them, and each
+// one is therefore optional.
+func guestMemoryCell(st *pve.GuestStatus) string {
+	cell := fmt.Sprintf("%s / %s", output.Bytes(st.Mem), output.Bytes(st.MaxMem))
+
+	var detail []string
+	if st.FreeMem > 0 {
+		detail = append(detail, "libre invité "+output.Bytes(st.FreeMem))
+	}
+	if st.MemHost > 0 {
+		detail = append(detail, "hôte "+output.Bytes(st.MemHost))
+	}
+	if p := st.PressureMemorySome; p != nil {
+		line := "pression " + output.Percent(p.Float())
+		// `full` means every task stalled at once, not merely some of them. It
+		// is the reading that precedes the OOM killer, so it earns its own
+		// mention on the rare occasions it leaves zero.
+		if f := st.PressureMemoryFull; f != nil && f.Float() > 0 {
+			line += " (bloqué " + output.Percent(f.Float()) + ")"
+		}
+		detail = append(detail, line)
+	}
+
+	if len(detail) == 0 {
+		return cell
+	}
+	return cell + "  (" + strings.Join(detail, " · ") + ")"
+}
+
 func guestDetailRows(kind pve.GuestType, cfg pve.GuestConfig, st *pve.GuestStatus) output.Rows {
 	rows := output.Rows{Headers: []string{"CHAMP", "VALEUR"}}
 	add := func(k, v string) {
@@ -261,7 +301,7 @@ func guestDetailRows(kind pve.GuestType, cfg pve.GuestConfig, st *pve.GuestStatu
 	add("verrou", st.Lock)
 	add("uptime", output.Uptime(st.Uptime))
 	add("cpu", fmt.Sprintf("%d vcpu", st.CPUs))
-	add("mémoire", fmt.Sprintf("%s / %s", output.Bytes(st.Mem), output.Bytes(st.MaxMem)))
+	add("mémoire", guestMemoryCell(st))
 	add("tags", strings.ReplaceAll(firstNonEmpty(st.Tags, cfg.String("tags")), ";", ", "))
 	add("os", cfg.String("ostype"))
 

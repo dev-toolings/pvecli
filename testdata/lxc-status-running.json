@@ -1,0 +1,32 @@
+{
+  "data": {
+    "cpu": 0.00265564594929261,
+    "cpus": 4,
+    "disk": 5011886080,
+    "diskread": 7450230784,
+    "diskwrite": 152115470336,
+    "ha": {
+      "managed": 0
+    },
+    "maxdisk": 63224987648,
+    "maxmem": 4294967296,
+    "maxswap": 536870912,
+    "mem": 288399360,
+    "name": "lab-infra-01",
+    "netin": 4743627847,
+    "netout": 1005552874,
+    "pid": 1234,
+    "pressurecpufull": "0.00",
+    "pressurecpusome": "0.00",
+    "pressureiofull": "0.00",
+    "pressureiosome": "0.00",
+    "pressurememoryfull": "0.00",
+    "pressurememorysome": "0.00",
+    "status": "running",
+    "swap": 46481408,
+    "tags": "lab;infra",
+    "type": "lxc",
+    "uptime": 51506,
+    "vmid": 121
+  }
+}
