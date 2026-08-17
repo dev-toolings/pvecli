@@ -49,6 +49,7 @@ de PVE **9.x** (le lab tourne en 9.2.2, pas en 8.x) ou via
 | `/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces` | GET | `pvecli vm agent ifaces`, `vm ip`, `iac inventory` | PVX-029 · 042 | 2026-07-31 | `pvesh usage` sur le nœud |
 | `/nodes/{node}/qemu/{vmid}/agent/exec` | POST | `pvecli vm agent exec` | PVX-078 | 2026-08-01 | `command` est répété une fois par argument — une seule chaîne serait lue comme un exécutable dont le nom contient des espaces ; il n'y a **pas** de shell derrière |
 | `/nodes/{node}/qemu/{vmid}/agent/exec-status` | GET | `pvecli vm agent exec` (attente) | PVX-078 | 2026-08-01 | rend `exited`, `exitcode`, `out-data`, `err-data` (champs en **tirets**) ; interrogé avec le `pid` rendu par `agent/exec` |
+| `/nodes/{node}/qemu/{vmid}/agent/file-read` | GET | `pvecli vm mem` | PVX-091 | 2026-08-17 | GET avec `file` en query, **pas** POST comme `agent/exec` (sinon 501) ; rend `{content, bytes-read}` ; demande `VM.GuestAgent.FileRead`, là où `/monitor`, qui expose la même stat balloon, exige `Sys.Audit` sur `/vms` |
 | `/nodes/{node}/lxc/{vmid}/snapshot` | GET · POST | `pvecli lxc snapshot ls\|create` | PVX-028 | 2026-07-31 | `PVE::API2::LXC::Snapshot`, lignes 24-109 du source du nœud |
 | `/nodes/{node}/lxc/{vmid}/snapshot/{name}/rollback` | POST | `pvecli lxc snapshot rollback` | PVX-028 | 2026-07-31 | `PVE::API2::LXC::Snapshot`, ligne 269 |
 | `/nodes/{node}/lxc/{vmid}/snapshot/{name}` | DELETE | `pvecli lxc snapshot rm` | PVX-028 | 2026-07-31 | `PVE::API2::LXC::Snapshot`, ligne 169 |

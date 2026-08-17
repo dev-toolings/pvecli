@@ -1548,3 +1548,60 @@ VM à conteneurs en bonne santé.
 avec quelles données, et si la question de l'opérateur porte sur le même
 référentiel. Ici l'hyperviseur répond « ce que j'ai donné », l'opérateur demande
 « ce qu'il reste », et les deux ont raison.
+
+---
+
+## 2026-08-18 — PVX-091, la valeur traversait bien virtio, c'est PVE qui la jetait
+
+**Correction de l'entrée du 11-08.** Elle affirmait que `MemAvailable` « ne
+traverse pas la frontière virtio », en signalant honnêtement « non vérifié côté
+QEMU ». La vérification a été faite, et la conclusion s'inverse. Sur la 230 :
+
+```
+# qom-get /machine/peripheral/balloon0 guest-stats
+"stat-available-memory": 6576697344,   # 6,13 GiB, exactement MemAvailable
+"stat-disk-caches":      5410582528,   # 5,04 GiB, le cache isolé
+"stat-free-memory":       747683840,   # le seul que PVE retienne
+"stat-total-memory":     8334499840,
+```
+
+`VIRTIO_BALLOON_S_AVAIL` est bien alimenté et QEMU l'expose. Mieux : PVE règle
+lui-même `guest-stats-polling-interval` à 2 secondes au démarrage de chaque VM
+avec ballooning, donc la valeur est fraîche en permanence et la lire ne coûte
+aucun aller-retour vers l'invité. Ce qui manquait n'était pas la donnée, c'était
+sa propagation : le callback `query-balloon` de `PVE::QemuServer` garde
+`total_mem` et `free_mem` et abandonne tout le bloc `stats`.
+
+**Ce qui a été livré.** Deux chemins, parce qu'ils n'ont pas la même durée de
+vie. `pvecli vm mem` lit `/proc/meminfo` par `agent/file-read` et survit à tout,
+puisqu'il ne dépend que de l'API publique. Le patch de nœud
+(`scripts/pve-availmem-patch`) ajoute `availmem` et `cachemem` à
+`status/current` et une ligne dans le résumé de l'interface, et il ne survit
+qu'aux mises à jour où le hook APT retrouve ses ancres.
+
+**La surprise du jour, côté droits.** Trois routes mènent à la même valeur et
+n'exigent pas du tout les mêmes privilèges. `/monitor`, qui accepte n'importe
+quelle commande HMP, demande `Sys.Audit|Sys.Modify` sur `/vms` et renvoie 403
+avec le token du lab, alors que celui-ci porte déjà `Sys.Audit` sur `/` : une
+ACL posée sur `/vms` **remplace** l'héritée au lieu de s'y ajouter.
+`agent/file-read` se contente de `VM.GuestAgent.FileRead`, que le token a déjà.
+La route la moins privilégiée était aussi la seule utilisable sans rien changer.
+
+**Deux pièges de forme, coûteux à deviner.** `agent/file-read` est un **GET**
+avec `file` en query, là où son voisin `agent/exec` est un POST ; l'envoyer en
+POST rend un 501 qui se lit comme un endpoint absent de cette version de PVE,
+soit le diagnostic le plus faux possible. Et côté Perl, insérer la nouvelle
+closure *après* la ligne `my $ballooncb = sub {` la place à l'intérieur de ce
+sub, hors de portée de la file QMP : c'est `perl -c` qui l'a dit, avant toute
+écriture, ce qui est exactement la raison d'être de ce garde-fou.
+
+**Ce qui a été écarté.** Rendre la jauge existante honnête plutôt que d'ajouter
+une ligne : elle deviendrait irréconciliable avec toutes les autres vues
+Proxmox, qui continuent d'afficher `total − free`. Les deux lectures cohabitent,
+dans l'interface comme dans `vm mem`.
+
+**Règle retenue.** « La donnée n'existe pas » et « personne ne la transporte »
+se ressemblent de l'extérieur et ne se corrigent pas au même endroit. Avant de
+conclure à l'absence d'une valeur, il faut descendre jusqu'à la couche qui la
+produit ; ici trois couches séparaient le noyau invité de l'écran, et une seule
+était en cause.

@@ -416,9 +416,22 @@ pvecli doctor                           # network → TLS → auth → node → 
 pvecli node ls
 pvecli vm ls -o json | jq '.[].name'
 pvecli vm show 211
+pvecli vm mem 211                       # ce que l'invité appelle disponible, pas ce que le ballon compte
 pvecli storage content local --content iso
 pvecli task ls --running
 ```
+
+`vm mem` mérite un mot, parce qu'il répond à une question que le reste ne
+répond pas. Proxmox dérive la mémoire d'une VM de virtio-balloon, `total_mem`
+moins `free_mem`, donc le cache de pages y compte comme occupé et un hôte à
+conteneurs au repos affiche 90 % sans manquer de rien. `vm mem` lit
+`MemAvailable` dans l'invité par l'agent et pose les deux lectures côte à côte,
+avec le cache récupérable et le PSI qui tranche.
+
+Le nœud lui-même peut afficher le bon chiffre : `scripts/pve-availmem-patch`
+ajoute `availmem`, `cachemem` et `memused` à l'API et branche la jauge du résumé
+dessus. C'est un patch de fichiers appartenant à `dpkg`, donc réappliqué par un
+hook APT après chaque mise à jour, avec `revert` pour revenir en arrière.
 
 Creating a virtual machine, guardrails included:
 

@@ -1,0 +1,36 @@
+{
+  "data": {
+    "agent": 1,
+    "balloon": 8589934592,
+    "balloon_min": 4294967296,
+    "clipboard": null,
+    "cpu": 0.0464513625726062,
+    "cpus": 2,
+    "disk": 0,
+    "diskread": 827931746,
+    "diskwrite": 11946272256,
+    "freemem": 754573312,
+    "ha": {
+      "managed": 0
+    },
+    "maxdisk": 26843545600,
+    "maxmem": 8589934592,
+    "mem": 7579926528,
+    "memhost": 8562679808,
+    "name": "lab-app-01",
+    "netin": 1863058105,
+    "netout": 60832418,
+    "pressurecpufull": 0,
+    "pressurecpusome": 0,
+    "pressureiofull": 0,
+    "pressureiosome": 0,
+    "pressurememoryfull": 0,
+    "pressurememorysome": 0,
+    "qmpstatus": "running",
+    "serial": 1,
+    "shares": 1000,
+    "status": "running",
+    "uptime": 252416,
+    "vmid": 211
+  }
+}

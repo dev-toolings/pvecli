@@ -198,8 +198,14 @@ type GuestStatus struct {
 	// FreeMem is the guest's own MemFree, relayed by the virtio-balloon driver.
 	// It is the counterweight to Mem, which PVE computes as total_mem minus
 	// free_mem: the guest's page cache is therefore counted as used, and any
-	// healthy container host reads as full. MemAvailable, the one figure that
-	// would answer "is it actually tight?", never crosses the virtio boundary.
+	// healthy container host reads as full.
+	//
+	// MemAvailable, the one figure that answers "is it actually tight?", does
+	// cross the virtio boundary: the driver reports it as stat-available-memory
+	// and QEMU exposes it on the balloon device, next to stat-disk-caches. It
+	// is PVE that drops both, keeping only total and free out of the stat block
+	// (PVE::QemuServer, the query-balloon callback). Reaching it therefore
+	// means going around the status endpoint, which is what `vm mem` does.
 	FreeMem int64 `json:"freemem,omitempty"`
 
 	// MemHost is what the QEMU process really occupies on the node. Once the

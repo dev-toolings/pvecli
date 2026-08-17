@@ -81,6 +81,10 @@ var (
 	epQemuAgentIfaces  = endpoint{"GET", "/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces"}
 	epQemuAgentExec    = endpoint{"POST", "/nodes/{node}/qemu/{vmid}/agent/exec"}
 	epQemuAgentStatus  = endpoint{"GET", "/nodes/{node}/qemu/{vmid}/agent/exec-status"}
+	// file-read is a GET with the path in the query string, not the POST that
+	// its sibling agent/exec is. Sending it as POST earns a 501 naming the
+	// method, which reads like a missing feature and is a wrong verb.
+	epQemuAgentFileRead = endpoint{"GET", "/nodes/{node}/qemu/{vmid}/agent/file-read"}
 
 	epLXCSnapshots    = endpoint{"GET", "/nodes/{node}/lxc/{vmid}/snapshot"}
 	epLXCSnapCreate   = endpoint{"POST", "/nodes/{node}/lxc/{vmid}/snapshot"}
@@ -216,6 +220,7 @@ var AllEndpoints = []endpoint{
 	epQemuAgentExec,
 	epTicket,
 	epQemuAgentStatus,
+	epQemuAgentFileRead,
 	epLXCSnapshots,
 	epLXCSnapCreate,
 	epLXCSnapRollback,

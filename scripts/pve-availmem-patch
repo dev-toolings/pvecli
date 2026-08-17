@@ -1,0 +1,467 @@
+#!/usr/bin/python3
+"""Surface the guest's own MemAvailable in the Proxmox VE API and web UI.
+
+Why this exists
+---------------
+PVE derives a VM's memory usage from virtio-balloon as total minus free, so the
+guest's page cache counts as used and a healthy container host reads as full.
+The guest already reports the honest figure: the balloon driver publishes
+stat-available-memory (MemAvailable) and stat-disk-caches next to the two
+counters PVE keeps. QEMU exposes them on the balloon device, refreshed every
+two seconds because PVE itself sets guest-stats-polling-interval at VM start.
+PVE simply drops them.
+
+This patch reads those two stats and renders them, in two dpkg-owned files:
+
+  /usr/share/perl5/PVE/QemuServer.pm          adds availmem + cachemem
+  /usr/share/pve-manager/js/pvemanagerlib.js  shows them in a guest's Summary
+
+Both belong to Debian packages and are replaced by every upgrade of
+pve-manager or qemu-server, which is why `apply` is idempotent and why the APT
+hook re-runs it. If an upgrade refactors an anchor, this script fails loudly
+rather than half-patching: a partial edit to either file is worse than none.
+
+Usage: pve-availmem-patch {apply|status|revert} [--from-hook]
+"""
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+PERL = "/usr/share/perl5/PVE/QemuServer.pm"
+JS = "/usr/share/pve-manager/js/pvemanagerlib.js"
+BACKUP_DIR = "/var/backups/pve-availmem"
+MARKER = "pve-availmem-patch"
+
+# ── Perl: expose the two stats in the API schema ─────────────────────────────
+
+PERL_SCHEMA_ANCHOR = "our $vmstatus_return_properties = {\n"
+
+PERL_SCHEMA_ADD = """    availmem => {
+        # %s: MemAvailable as the guest itself computes it, relayed by
+        # virtio-balloon as stat-available-memory. Unlike `mem`, it already
+        # discounts the reclaimable cache, so it answers "is this guest tight?".
+        description => "Memory the guest considers available (its MemAvailable)."
+            . " Absent when the balloon driver does not report it.",
+        type => 'integer',
+        optional => 1,
+        renderer => 'bytes',
+    },
+    cachemem => {
+        # %s: the reclaimable page cache inside the guest, which is the whole
+        # of what inflates `mem` above what the guest is really using.
+        description => "Reclaimable page cache inside the guest.",
+        type => 'integer',
+        optional => 1,
+        renderer => 'bytes',
+    },
+    memused => {
+        # %s: what `mem` should have been. The interface binds its memory gauge
+        # to this, so it is defined for every QEMU guest and falls back to
+        # `mem` when the balloon driver reports nothing.
+        description => "Memory the guest is really using: its own total minus"
+            . " its MemAvailable. Falls back to the ballooning figure when the"
+            . " guest does not report the stat.",
+        type => 'integer',
+        optional => 1,
+        renderer => 'bytes',
+    },
+""" % (MARKER, MARKER, MARKER)
+
+PERL_CB_ANCHOR = "    my $ballooncb = sub {\n"
+
+PERL_CB_ADD = """    # %s: the stats block carries MemAvailable and the guest's page cache,
+    # which the query-balloon callback below discards. Reading it costs no guest
+    # round trip: QEMU refreshes these every two seconds on its own.
+    my $balloonstatscb = sub {
+        my ($vmid, $resp) = @_;
+
+        my $stats = $resp->{'return'}->{stats};
+        return if !$stats;
+
+        my $d = $res->{$vmid};
+        # A zero here means the driver did not report the counter, not that the
+        # guest has none of it: an older virtio-balloon omits both.
+        $d->{availmem} = $stats->{'stat-available-memory'}
+            if $stats->{'stat-available-memory'};
+        $d->{cachemem} = $stats->{'stat-disk-caches'}
+            if $stats->{'stat-disk-caches'};
+
+        # The guest's own subtraction, its total minus what it calls available.
+        # Deriving this from maxmem instead would overstate usage by the slice
+        # the kernel reserves at boot and never hands back.
+        if ($stats->{'stat-available-memory'} && $stats->{'stat-total-memory'}) {
+            my $used =
+                $stats->{'stat-total-memory'} - $stats->{'stat-available-memory'};
+            $d->{memused} = $used if $used > 0;
+        }
+    };
+
+""" % MARKER
+
+PERL_QUEUE_ANCHOR = "        $qmpclient->queue_cmd($qmp_peer, $ballooncb, 'query-balloon');\n"
+
+PERL_QUEUE_ADD = """        # %s: must stay after query-balloon. A guest with no balloon driver
+        # fails that command, and QMPClient aborts whatever follows, which is
+        # exactly the wanted behaviour here. vmstatus calls queue_execute with
+        # noerr=2, so neither failure warns nor dies.
+        $qmpclient->queue_cmd(
+            $qmp_peer,
+            $balloonstatscb,
+            'qom-get',
+            path => 'machine/peripheral/balloon0',
+            property => 'guest-stats',
+        );
+""" % MARKER
+
+PERL_FALLBACK_ANCHOR = (
+    "        $res->{$vmid}->{qmpstatus} = $res->{$vmid}->{status}"
+    " if !$res->{$vmid}->{qmpstatus};\n"
+)
+
+PERL_FALLBACK_ADD = """        # %s: memused must exist for every QEMU guest, running or not, because
+        # the interface binds a gauge to it. Without this a stopped VM, or one
+        # whose balloon driver stays silent, would render an empty bar where it
+        # used to render a zero.
+        $res->{$vmid}->{memused} //= $res->{$vmid}->{mem} // 0;
+""" % MARKER
+
+# ── JS: put the gauge on a figure the guest agrees with ──────────────────────
+
+# The gauge itself. PVE.panel.GuestStatusView serves both guest types from one
+# array, so the row cannot simply switch field: a container has no memused.
+# Splitting it in two, each bound by cbind to its own type, keeps containers on
+# the original behaviour with no conditional logic to get wrong.
+JS_GAUGE_ANCHOR = """            valueField: 'mem',
+            maxField: 'maxmem',
+            warningThreshold: 0.9,
+            criticalThreshold: 0.975,
+        },
+"""
+
+JS_GAUGE_REPLACEMENT = """            valueField: 'mem',
+            maxField: 'maxmem',
+            warningThreshold: 0.9,
+            criticalThreshold: 0.975,
+            // %s: this row now serves containers only. On a VM, `mem` is total
+            // minus free and counts reclaimable cache as used, which the row
+            // below replaces rather than sits beside: two gauges labelled
+            // "Memory usage" disagreeing by 60 points would be worse than one
+            // wrong gauge.
+            cbind: {
+                hidden: '{isQemu}',
+                disabled: '{isQemu}',
+            },
+        },
+        {
+            // %s: the same gauge, on a figure the guest agrees with. memused is
+            // the guest's own total minus its MemAvailable, and it falls back
+            // to `mem` when the balloon driver reports nothing, so a stopped VM
+            // still renders the zero it always did.
+            itemId: 'memory-used',
+            iconCls: 'fa fa-fw pmx-itype-icon-memory pmx-icon',
+            title: gettext('Memory usage'),
+            valueField: 'memused',
+            maxField: 'maxmem',
+            warningThreshold: 0.9,
+            criticalThreshold: 0.975,
+            cbind: {
+                hidden: '{isLxc}',
+                disabled: '{isLxc}',
+            },
+        },
+""" % (MARKER, MARKER)
+
+JS_ANCHOR = "            itemId: 'memory-host',\n"
+
+JS_ADD = """        {
+            // %s: the absolute figure to act on, next to the gauge's ratio.
+            itemId: 'memory-available',
+            iconCls: 'fa fa-fw pmx-itype-icon-memory pmx-icon',
+            title: 'Mémoire disponible',
+            valueField: 'availmem',
+            maxField: 'maxmem',
+            printBar: false,
+            renderer: function (used, max) {
+                if (!Ext.isNumeric(used) || used <= 0) {
+                    return Proxmox.Utils.unknownText;
+                }
+                let text = Proxmox.Utils.render_size(used);
+                if (Ext.isNumeric(max) && max > 0) {
+                    text += ' (' + ((used * 100) / max).toFixed(2) + '%%)';
+                }
+                return text;
+            },
+            cbind: {
+                hidden: '{isLxc}',
+                disabled: '{isLxc}',
+            },
+        },
+""" % MARKER
+
+
+def fail(message):
+    print(f"pve-availmem-patch: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def package_version(package):
+    try:
+        out = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Version}", package],
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def backup_once(path, package):
+    """Keep one pristine copy per package version.
+
+    Per version, not per run: re-running after an upgrade must capture the new
+    upstream file, while re-running against an already patched file must not
+    overwrite the pristine copy with a patched one.
+    """
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    target = os.path.join(
+        BACKUP_DIR, f"{os.path.basename(path)}.{package_version(package)}"
+    )
+    if not os.path.exists(target):
+        shutil.copy2(path, target)
+    return target
+
+
+def insert_after(text, anchor, addition, what):
+    if anchor not in text:
+        fail(
+            f"ancre introuvable dans {what} : « {anchor.strip()} ».\n"
+            "  Une mise à jour de PVE a probablement remanié ce fichier.\n"
+            "  Rien n'a été modifié. Vérifier le patch avant de le réappliquer."
+        )
+    if text.count(anchor) != 1:
+        fail(f"ancre ambiguë dans {what} ({text.count(anchor)} occurrences)")
+    return text.replace(anchor, anchor + addition, 1)
+
+
+def replace_once(text, anchor, replacement, what):
+    """Swap a block for another, refusing anything but an exact single match."""
+    if text.count(anchor) != 1:
+        fail(
+            f"bloc à remplacer absent ou ambigu dans {what} "
+            f"({text.count(anchor)} occurrences).\n"
+            "  Une mise à jour de PVE a probablement remanié ce fichier.\n"
+            "  Rien n'a été modifié."
+        )
+    return text.replace(anchor, replacement, 1)
+
+
+def insert_before(text, anchor, addition, what):
+    """Insert ahead of the anchor line.
+
+    The callback has to be declared as a sibling of $ballooncb, not inside it:
+    inserting after the `my $ballooncb = sub {` line scopes the new closure to
+    that sub's body, where the queue below cannot see it. Perl says so at
+    compile time, which is why the syntax gate above runs before any write.
+    """
+    if text.count(anchor) != 1:
+        fail(f"ancre absente ou ambiguë dans {what} ({text.count(anchor)} occurrences)")
+    return text.replace(anchor, addition + anchor, 1)
+
+
+def insert_after_block(text, anchor, addition, what):
+    """Insert after the object the anchor line belongs to.
+
+    The JS row is an object literal; appending straight after the anchor line
+    would land inside it. Scanning to the first closing at the object's own
+    indentation is what puts the new row between two rows rather than within
+    one.
+    """
+    if text.count(anchor) != 1:
+        fail(f"ancre absente ou ambiguë dans {what} ({text.count(anchor)} occurrences)")
+
+    start = text.index(anchor)
+    close = re.compile(r"^        \},\n", re.MULTILINE)
+    match = close.search(text, start)
+    if not match:
+        fail(f"fin de bloc introuvable après l'ancre dans {what}")
+    end = match.end()
+    return text[:end] + addition + text[end:]
+
+
+def check_perl_syntax(path):
+    out = subprocess.run(
+        ["perl", "-c", path], capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        return out.stderr.strip()
+    return None
+
+
+def check_js_delta(before, after, added, removed):
+    """Verify the file changed by exactly the edits, and by nothing else.
+
+    No node interpreter ships on a PVE node, so the bundle cannot be parsed
+    here. Counting braces in absolute terms would prove nothing either: a 2 MB
+    file full of string literals and regexes never balances. What this does
+    catch is the failure that actually matters, a write that truncated or
+    duplicated part of the file. Whether the rows render is settled by loading
+    the interface, not by this.
+    """
+    def delta(counter):
+        return sum(counter(text) for text in added) - sum(counter(text) for text in removed)
+
+    expected = len(before) + delta(len)
+    if len(after) != expected:
+        return f"taille inattendue : {len(after)} octets, attendu {expected}"
+    for symbol in "{}()[]":
+        if after.count(symbol) != before.count(symbol) + delta(lambda t: t.count(symbol)):
+            return f"le compte de « {symbol} » ne correspond pas aux seules éditions"
+    return None
+
+
+def restart_services():
+    """Reload every daemon holding a copy of the edited code.
+
+    pvedaemon is the one that is easy to forget and the one that matters most:
+    it preloads the Perl modules and answers /status/current, so leaving it
+    running keeps serving the pre-patch schema while `qm status` on the same
+    node already shows the new fields. pvestatd feeds the resource store and
+    pveproxy serves the JS bundle.
+    """
+    for unit in ("pvestatd", "pvedaemon"):
+        subprocess.run(["systemctl", "restart", unit], check=False)
+    subprocess.run(["systemctl", "reload-or-restart", "pveproxy"], check=False)
+    print("pve-availmem-patch: pvestatd, pvedaemon et pveproxy relancés.")
+
+
+def is_patched(path):
+    with open(path, encoding="utf-8") as handle:
+        return MARKER in handle.read()
+
+
+def write_atomic(path, text):
+    """Write through a temporary file in the same directory.
+
+    A truncated pvemanagerlib.js is a blank web interface, and the moment it
+    would happen is a power cut during an upgrade hook.
+    """
+    temp = path + ".pve-availmem.tmp"
+    stat = os.stat(path)
+    with open(temp, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.chmod(temp, stat.st_mode)
+    os.replace(temp, path)
+
+
+def apply(from_hook):
+    for path in (PERL, JS):
+        if not os.path.exists(path):
+            fail(f"fichier absent : {path}")
+
+    if is_patched(PERL) and is_patched(JS):
+        print("pve-availmem-patch: déjà appliqué, rien à faire.")
+        return
+
+    backup_once(PERL, "qemu-server")
+    backup_once(JS, "pve-manager")
+
+    if not is_patched(PERL):
+        with open(PERL, encoding="utf-8") as handle:
+            text = handle.read()
+        text = insert_after(text, PERL_SCHEMA_ANCHOR, PERL_SCHEMA_ADD, "QemuServer.pm (schéma)")
+        text = insert_before(text, PERL_CB_ANCHOR, PERL_CB_ADD, "QemuServer.pm (callback)")
+        text = insert_after(text, PERL_QUEUE_ANCHOR, PERL_QUEUE_ADD, "QemuServer.pm (file QMP)")
+        text = insert_after(
+            text, PERL_FALLBACK_ANCHOR, PERL_FALLBACK_ADD, "QemuServer.pm (repli memused)"
+        )
+
+        candidate = PERL + ".pve-availmem.check"
+        with open(candidate, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        error = check_perl_syntax(candidate)
+        os.unlink(candidate)
+        if error:
+            fail(f"le Perl patché ne compile pas, abandon :\n{error}")
+        write_atomic(PERL, text)
+        print(f"pve-availmem-patch: {PERL} patché.")
+
+    if not is_patched(JS):
+        with open(JS, encoding="utf-8") as handle:
+            original = handle.read()
+        text = insert_after_block(original, JS_ANCHOR, JS_ADD, "pvemanagerlib.js (ligne dispo)")
+        text = replace_once(
+            text, JS_GAUGE_ANCHOR, JS_GAUGE_REPLACEMENT, "pvemanagerlib.js (jauge)"
+        )
+        error = check_js_delta(
+            original, text, [JS_ADD, JS_GAUGE_REPLACEMENT], [JS_GAUGE_ANCHOR]
+        )
+        if error:
+            fail(f"le JS patché est structurellement invalide, abandon : {error}")
+        write_atomic(JS, text)
+        print(f"pve-availmem-patch: {JS} patché.")
+
+    restart_services()
+    if from_hook:
+        print("pve-availmem-patch: réappliqué après une mise à jour APT.")
+
+
+def status():
+    for path, package in ((PERL, "qemu-server"), (JS, "pve-manager")):
+        state = "patché" if is_patched(path) else "D'ORIGINE"
+        print(f"{state:10s} {path}  (paquet {package} {package_version(package)})")
+    if os.path.isdir(BACKUP_DIR):
+        for name in sorted(os.listdir(BACKUP_DIR)):
+            print(f"sauvegarde {os.path.join(BACKUP_DIR, name)}")
+
+
+def revert():
+    restored = False
+    for path, package in ((PERL, "qemu-server"), (JS, "pve-manager")):
+        source = os.path.join(
+            BACKUP_DIR, f"{os.path.basename(path)}.{package_version(package)}"
+        )
+        if not os.path.exists(source):
+            print(f"pve-availmem-patch: pas de sauvegarde pour {path}", file=sys.stderr)
+            continue
+        shutil.copy2(source, path)
+        print(f"pve-availmem-patch: {path} restauré depuis {source}")
+        restored = True
+    if restored:
+        subprocess.run(["systemctl", "restart", "pvestatd"], check=False)
+        subprocess.run(["systemctl", "reload-or-restart", "pveproxy"], check=False)
+
+
+def main():
+    args = sys.argv[1:]
+    from_hook = "--from-hook" in args
+    args = [a for a in args if not a.startswith("--")]
+    action = args[0] if args else "status"
+
+    if action == "apply":
+        try:
+            apply(from_hook)
+        except SystemExit:
+            # From the APT hook, a failure must be loud but must never leave a
+            # package half-configured: apt would then need manual rescue for a
+            # cosmetic patch.
+            if from_hook:
+                print(
+                    "pve-availmem-patch: RÉAPPLICATION ÉCHOUÉE. L'interface est"
+                    " revenue au comportement d'origine.",
+                    file=sys.stderr,
+                )
+                sys.exit(0)
+            raise
+    elif action == "status":
+        status()
+    elif action == "revert":
+        revert()
+    else:
+        fail(f"action inconnue : {action} (apply|status|revert)")
+
+
+if __name__ == "__main__":
+    main()

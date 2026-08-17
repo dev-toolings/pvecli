@@ -20,7 +20,7 @@ func newVMCmd() *cobra.Command {
 	c.AddCommand(statusCommands(pve.TypeQEMU)...)
 	c.AddCommand(newVMCreateCmd(), newGuestRemoveCmd(pve.TypeQEMU), newVMSetCmd())
 	c.AddCommand(newVMCloneCmd(), newVMTemplateCmd())
-	c.AddCommand(newSnapshotCmd(pve.TypeQEMU), newVMAgentCmd(), newVMIPCmd())
+	c.AddCommand(newSnapshotCmd(pve.TypeQEMU), newVMAgentCmd(), newVMIPCmd(), newVMMemCmd())
 	c.AddCommand(newMigrateCmd(pve.TypeQEMU))
 	c.AddCommand(newVMDeclareCmd())
 	return c
