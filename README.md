@@ -523,6 +523,45 @@ The listing also reads `remove`, the switch that arms the retention. A policy
 written but disarmed shows up as `keep-last=3 (INERTE : remove=0)` rather than
 as a policy, because the reassuring version of that line is the dangerous one.
 
+### Knowing that a backup failed
+
+A scheduled job is the one that runs when nobody is watching, so it is also the
+one whose failure nobody sees. A fresh node ships with a single target,
+`mail-to-root`, writing to `root@pam`'s local mailbox: on a lab with no outgoing
+MTA, that failure is reported where no one ever looks. The RPO is intact on
+paper and the feedback loop is cut.
+
+```sh
+pvecli notify target ls                    # ← only the built-in means: nobody is told
+pvecli notify webhook create discord --discord "$DISCORD_WEBHOOK"
+pvecli notify matcher create discord-alerts --target discord --severity warning,error
+pvecli notify target test discord          # the only step that proves delivery
+```
+
+Three traps this family walks around, all measured against the lab node on
+2026-08-18 rather than inferred.
+
+`--mode all` with several severities produces a rule that can never match. The
+node accepts it, the UI renders it normally, and nothing routes: `all` requires
+every criterion to hold *at once*, entries of one list included, and a
+notification carries exactly one severity. A failing `vzdump` reported
+`notified via target mail-to-root` alone until the mode was switched. So the
+command switches to `any` by itself past the second severity, and **refuses** an
+explicit `--mode all` rather than silently overriding the choice.
+
+A comma-joined list is accepted, then inert. `match-severity` is an array;
+sending `warning,error` as one value passes validation and matches nothing ever
+after. Only repeated keys leave this CLI.
+
+And a webhook's `url` is validated against a URL regex, so a whole template
+(`{{ secrets.url }}`) is rejected by an error that never mentions templates.
+`--discord` therefore splits the URL: the stable part stays in the clear, the id
+and token go into two secrets the node never renders back.
+
+One caveat worth stating: `notify target test` posts **straight to the target**
+and bypasses matchers. A test that arrives proves the downstream half, never the
+routing. Proving the whole chain needs a real event.
+
 Those scheduled jobs need `Sys.Modify` — and among the node's built-in roles,
 only `Administrator` carries it. Since an ACL grants a *role* and never a
 privilege, the least-privilege way out is a custom role:

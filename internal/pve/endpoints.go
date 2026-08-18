@@ -169,6 +169,31 @@ var (
 	epBackupJobSet = endpoint{"PUT", "/cluster/backup/{id}"}
 	epBackupJobDel = endpoint{"DELETE", "/cluster/backup/{id}"}
 
+	// Le sous-système de NOTIFICATION, au niveau CLUSTER. Il répond à la seule
+	// question que /cluster/backup ne répond pas : qui apprend qu'un job a
+	// échoué. Un nœud sort d'installation avec la seule cible « mail-to-root »,
+	// qui poste dans la boîte locale de root@pam ; sur un lab sans MTA, les
+	// échecs sont donc notifiés à un endroit que personne n'ouvre.
+	//
+	// Les cibles sont écrites par type (…/endpoints/webhook), mais LUES aussi
+	// par une vue unifiée (…/targets) qui est la seule à répondre « qu'est-ce
+	// qui est branché ». Voir internal/pve/notify.go et PVX-091.
+	//
+	// Privilèges : Sys.Audit sur / pour lire, Sys.Modify sur / pour écrire.
+	// Donc PAS atteignable avec un token qui n'a Sys.Modify que sur
+	// /nodes/{node} : c'est le piège de cette famille, et il rend un 403 qui
+	// nomme « / » sans dire que le token, lui, était bon.
+	epNotifyTargets    = endpoint{"GET", "/cluster/notifications/targets"}
+	epNotifyTargetTest = endpoint{"POST", "/cluster/notifications/targets/{name}/test"}
+	epNotifyWebhooks   = endpoint{"GET", "/cluster/notifications/endpoints/webhook"}
+	epNotifyWebhookNew = endpoint{"POST", "/cluster/notifications/endpoints/webhook"}
+	epNotifyWebhook    = endpoint{"GET", "/cluster/notifications/endpoints/webhook/{name}"}
+	epNotifyWebhookDel = endpoint{"DELETE", "/cluster/notifications/endpoints/webhook/{name}"}
+	epNotifyMatchers   = endpoint{"GET", "/cluster/notifications/matchers"}
+	epNotifyMatcherNew = endpoint{"POST", "/cluster/notifications/matchers"}
+	epNotifyMatcher    = endpoint{"GET", "/cluster/notifications/matchers/{name}"}
+	epNotifyMatcherDel = endpoint{"DELETE", "/cluster/notifications/matchers/{name}"}
+
 	epTasks      = endpoint{"GET", "/nodes/{node}/tasks"}
 	epTaskStatus = endpoint{"GET", "/nodes/{node}/tasks/{upid}/status"}
 	epTaskLog    = endpoint{"GET", "/nodes/{node}/tasks/{upid}/log"}
@@ -269,6 +294,16 @@ var AllEndpoints = []endpoint{
 	epBackupJob,
 	epBackupJobSet,
 	epBackupJobDel,
+	epNotifyTargets,
+	epNotifyTargetTest,
+	epNotifyWebhooks,
+	epNotifyWebhookNew,
+	epNotifyWebhook,
+	epNotifyWebhookDel,
+	epNotifyMatchers,
+	epNotifyMatcherNew,
+	epNotifyMatcher,
+	epNotifyMatcherDel,
 	epTasks,
 	epTaskStatus,
 	epTaskLog,

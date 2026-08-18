@@ -1,0 +1,1 @@
+{"data":[{"body":"eyJjb250ZW50IjoiKip7eyBlc2NhcGUgdGl0bGUgfX0qKlxue3sgZXNjYXBlIG1lc3NhZ2UgfX0ifQ==","comment":"Alertes infra vers Discord","header":["name=Content-Type,value=YXBwbGljYXRpb24vanNvbg=="],"method":"post","name":"discord","origin":"user-created","secret":["name=id","name=token"],"url":"https://discord.com/api/webhooks/{{ secrets.id }}/{{ secrets.token }}"}]}

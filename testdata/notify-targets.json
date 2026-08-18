@@ -1,0 +1,1 @@
+{"data":[{"comment":"Send mails to root@pam's email address","name":"mail-to-root","origin":"builtin","type":"sendmail"},{"comment":"Alertes infra vers Discord","name":"discord","origin":"user-created","type":"webhook"}]}

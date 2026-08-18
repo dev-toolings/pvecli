@@ -82,7 +82,7 @@ Authentification par token d'API, TLS vérifié, sortie table|json|yaml.
 		newVMCmd(), newLXCCmd(), newGuestCmd(), newStorageCmd(), newTaskCmd(), newClusterCmd(),
 		newAccessCmd(), newBackupCmd(), newDRCmd(), newIaCCmd(),
 		newNetCmd(), newPoolCmd(), newAICmd(), newCFCmd(),
-		newFwCmd(), newUpdateCmd(), newUpgradeCmd(),
+		newFwCmd(), newNotifyCmd(), newUpdateCmd(), newUpgradeCmd(),
 	)
 
 	// Last, and on the built tree: the completers are attached by walking the

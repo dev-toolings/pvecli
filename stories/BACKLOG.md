@@ -23,6 +23,7 @@
 > | PVX-088 capturer les fixtures de job de sauvegarde | M13 Exploitation | 🔴 **RAF** — dépend de PVX-086 |
 > | PVX-089 secret en clair sur le poste Linux | M12 Amorçage & secret | 🔴 **RAF** — re-qualifié le 03-08 : le trousseau `login` est **verrouillé**, pas absent |
 > | PVX-090 notification de mise à jour au shell | M12 Amorçage & secret | ✅ livré — 3 correctifs, dont deux mesurés en production |
+> | PVX-091 notifications : cibles, routage, envoi de test | M13 Exploitation | ✅ livré, avec un piège de routage mesuré sur le lab, pas déduit |
 
 ---
 
@@ -1023,3 +1024,63 @@ binaire** parce qu'`install.sh`, récupéré seul par `curl`, n'a jamais le dép
 sous la main : la seule alternative était d'en garder une copie dans
 l'installeur, et deux copies qui doivent rester d'accord finissent toujours par
 diverger.
+
+---
+
+### PVX-091 — Savoir qu'une sauvegarde a échoué
+
+**Taille** M · **Type** ⚙ · **Lot** M13 · **Statut** ✅ livré le 2026-08-18
+
+**Le trou que ça bouche.** M5 sait planifier une sauvegarde, M13 sait la purger
+et la restaurer. Aucun des deux ne dit **qui apprend l'échec**. Un nœud sort
+d'installation avec une seule cible, `mail-to-root`, qui écrit dans la boîte
+locale de `root@pam` : sur un lab sans MTA sortant, l'échec d'un `vzdump` est
+notifié à un endroit que personne n'ouvre. Le RPO est intact sur le papier, la
+boucle de rétroaction est coupée en pratique. C'est devenu urgent le jour où la
+rétention du lab est passée à `keep-last=1` : avec une seule archive, deux nuits
+d'échec silencieux et il ne reste plus rien de frais.
+
+**Livré** : `pvecli notify`, trois sous-familles :
+
+| Commande | Ce qu'elle répond |
+| --- | --- |
+| `notify target ls` | qu'est-ce qui est branché sur ce nœud, et avertit quand seule la cible intégrée existe |
+| `notify target test` | **la seule preuve** que la chaîne délivre |
+| `notify webhook create --discord <url>` | monte une cible Discord complète, en évitant deux pièges d'API |
+| `notify webhook ls\|show\|rm` | lecture et démontage, secrets jamais rendus |
+| `notify matcher ls\|create\|rm` | le routage, sans lequel une cible ne reçoit rien |
+
+**Trois pièges, tous mesurés sur le nœud du lab le 18-08-2026, aucun déduit.**
+
+1. **`mode all` avec plusieurs sévérités donne une règle morte.** `match-severity` à
+   `warning,error,unknown` avec `mode all` est **accepté** par le nœud,
+   s'affiche normalement dans l'interface, et ne route **rien** : « all » exige
+   que tous les critères tiennent en même temps, entrées d'une même liste
+   comprises, et une notification ne porte qu'une sévérité. Constaté en direct :
+   un `vzdump` en échec repartait avec `notified via target mail-to-root` seul.
+   Passé en `mode any`, le même échec ajoute `notified via target discord`.
+   La commande bascule donc sur `any` d'elle-même dès la deuxième sévérité, et
+   **refuse** un `--mode all` explicite plutôt que de corriger en silence.
+2. **Une liste jointe par des virgules est acceptée puis inerte.** `target`,
+   `match-severity`, `match-field` et `match-calendar` sont des tableaux :
+   envoyer `warning,error` comme UNE valeur passe la validation et ne matche
+   plus jamais. La CLI n'émet que des clés répétées.
+3. **Le champ `url` d'un webhook est validé contre une regex d'URL.** Y écrire
+   un gabarit entier (`{{ secrets.url }}`) échoue en `value does not match
+   the regex pattern`, une erreur qui n'accuse jamais le gabarit. Le raccourci
+   `--discord` coupe donc l'URL : la partie stable reste en clair, l'id et le
+   jeton partent dans deux secrets distincts, que le nœud ne rend jamais.
+
+**Ce que l'envoi de test ne prouve pas.** `POST …/targets/{name}/test` poste
+**directement** vers la cible et **contourne les matchers**. Un test qui arrive
+prouve la moitié aval de la chaîne, jamais le routage. C'est exactement ce qui a
+masqué le piège n° 1 pendant tout le montage initial : les messages arrivaient,
+et rien ne routait. La seule preuve complète est un vrai événement : ici un
+`vzdump` sur un vmid inexistant, qui échoue sans toucher aucun guest.
+
+**Le privilège qui surprend.** Toutes les écritures exigent `Sys.Modify` sur
+`/`, pas sur `/nodes/{node}`. Le token `pvectl-cc` du lab administre le nœud et
+repart malgré tout avec un 403 sur cette famille : même mur que PVX-086.
+
+**Fixtures** : `testdata/notify-*.json` sont de **vraies captures** du nœud en
+PVE 9.2.6, prises après le montage de la cible Discord.
