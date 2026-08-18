@@ -167,6 +167,21 @@ JS_GAUGE_REPLACEMENT = """            valueField: 'mem',
             maxField: 'maxmem',
             warningThreshold: 0.9,
             criticalThreshold: 0.975,
+            // cbind hides this row on a container, but StatusView.updateValues
+            // iterates query('pmxInfoWidget'), which returns hidden and disabled
+            // widgets all the same. A container has no memused, getRecordValue
+            // then answers '' and the default fieldRenderer hands that empty
+            // string to render_size_usage, which unlike render_size does not
+            // guard: format_size('') calls ''.toFixed and throws. The exception
+            // aborts the forEach, so every row declared after this one, swap and
+            // Bootdisk size included, stays on "Loading" forever. Guarding here
+            // is what upstream already does one row below, in memory-host.
+            renderer: function (used, max) {
+                if (!Ext.isNumeric(used)) {
+                    return '';
+                }
+                return Proxmox.Utils.render_size_usage(used, max);
+            },
             cbind: {
                 hidden: '{isLxc}',
                 disabled: '{isLxc}',
