@@ -205,11 +205,33 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
+// DiscordEmbedBody est le gabarit de corps posé par DiscordWebhook.
+//
+// Vérifié contre le nœud du lab le 18-08-2026, sur un envoi de test ET sur un
+// vrai vzdump en échec : le rendu pèse environ 300 octets dans les deux cas,
+// donc il ne peut pas franchir les limites de Discord, quel que soit l'incident.
+//
+// « fields.[job-id] » prend des crochets parce que le moteur lirait sinon le
+// tiret comme une soustraction. Ce champ n'existe que pour un job PLANIFIÉ :
+// sa présence dans le message dit donc à elle seule qu'il ne s'agit pas d'une
+// sauvegarde lancée à la main.
+const DiscordEmbedBody = `{"embeds":[{` +
+	`"title":"{{ escape title }}",` +
+	`"color":15158332,` +
+	`"fields":[` +
+	`{"name":"Nœud","value":"{{#if fields.hostname }}{{ escape fields.hostname }}{{else}}n/a{{/if}}","inline":true},` +
+	`{"name":"Source","value":"{{#if fields.type }}{{ escape fields.type }}{{else}}test{{/if}}","inline":true},` +
+	`{"name":"Sévérité","value":"{{ escape severity }}","inline":true}` +
+	`{{#if fields.[job-id] }},{"name":"Job planifié","value":"` + "`" + `{{ escape fields.[job-id] }}` + "`" + `","inline":false}{{/if}}` +
+	`],` +
+	`"footer":{"text":"Proxmox VE · détail dans Tâches"}` +
+	`}]}`
+
 // DiscordWebhook fabrique les options d'une cible Discord à partir de l'URL de
 // webhook que Discord donne.
 //
-// Elle existe parce que le montage à la main tombe dans deux pièges, et que les
-// deux rendent une erreur qui ne les nomme pas :
+// Elle existe parce que le montage à la main tombe dans trois pièges, et
+// qu'aucun des trois ne rend une erreur qui le nomme :
 //
 //  1. Le champ « url » est validé contre une regex d'URL par le nœud. Y mettre
 //     un gabarit entier (« {{ secrets.url }} ») est refusé par un « value does
@@ -220,11 +242,23 @@ func sortedKeys(m map[string]string) []string {
 //     « Content-Type: application/json ». Sans corps déclaré, PVE poste le
 //     rendu texte par défaut et Discord répond 400 sans que rien n'apparaisse
 //     dans le salon.
+//  3. Le corps ne doit PAS transporter « message ». Un rapport vzdump est
+//     plafonné à MAX_LOG_SIZE, soit 1 MiB, quand un embed Discord plafonne à
+//     4096 caractères de description. Verser le message brut fait donc échouer
+//     la requête en 400 exactement les jours de gros incident, c'est-à-dire
+//     quand l'alerte comptait. Le gabarit porte le titre et les métadonnées ;
+//     le détail reste dans les tâches du nœud, à un geste de là.
 //
-// Le gabarit passe titre et message par le filtre « escape » du moteur de
-// rendu. Un message contenant un guillemet, un chemin Windows ou une sortie de
-// tâche fabriquerait sinon un JSON invalide, et l'alerte disparaîtrait
-// précisément le jour où elle avait quelque chose à dire.
+// LE FORMAT EST UN EMBED, PAS DU TEXTE. Discord ne rend aucun tableau markdown,
+// et un bloc de code aligné défile horizontalement sur téléphone. Les champs
+// « inline » d'un embed sont la seule primitive qui se réorganise seule : trois
+// colonnes sur écran large, une seule sur mobile.
+//
+// Le gabarit passe chaque valeur par le filtre « escape » du moteur de rendu.
+// Un titre contenant un guillemet fabriquerait sinon un JSON invalide, et
+// l'alerte disparaîtrait le jour où elle avait quelque chose à dire. Les
+// valeurs absentes ont un repli explicite : un champ vide est refusé par
+// Discord, et « notify target test » n'envoie aucune métadonnée.
 func DiscordWebhook(name, hookURL, comment string) (WebhookOptions, error) {
 	id, token, err := splitDiscordWebhook(hookURL)
 	if err != nil {
@@ -237,7 +271,7 @@ func DiscordWebhook(name, hookURL, comment string) (WebhookOptions, error) {
 		Comment: comment,
 		Headers: map[string]string{"Content-Type": "application/json"},
 		Secrets: map[string]string{"id": id, "token": token},
-		Body:    `{"content":"**{{ escape title }}**\n{{ escape message }}"}`,
+		Body:    DiscordEmbedBody,
 	}, nil
 }
 

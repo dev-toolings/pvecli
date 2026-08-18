@@ -3,6 +3,7 @@ package pve
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -37,11 +38,63 @@ func TestDiscordWebhookSplitsSecretsOutOfTheURL(t *testing.T) {
 		t.Fatalf("en-tête manquant : %+v", o.Headers)
 	}
 
-	// Sans « escape », un message contenant un guillemet fabrique un JSON
+	// Sans « escape », un titre contenant un guillemet fabrique un JSON
 	// invalide, donc l'alerte disparaît le jour où elle a quelque chose à
 	// dire.
-	if !strings.Contains(o.Body, "escape message") {
-		t.Fatalf("le gabarit doit échapper le message : %q", o.Body)
+	if !strings.Contains(o.Body, "escape title") {
+		t.Fatalf("le gabarit doit échapper le titre : %q", o.Body)
+	}
+}
+
+func TestDiscordEmbedBodyStaysSmallAndRenders(t *testing.T) {
+	// Le corps ne doit JAMAIS transporter « message ». Un rapport vzdump est
+	// plafonné à 1 MiB côté PVE, un embed Discord à 4096 caractères de
+	// description : l'inclure ferait échouer la requête en 400 les jours de
+	// gros incident, donc pile quand l'alerte comptait.
+	if strings.Contains(DiscordEmbedBody, "message") {
+		t.Fatal("le gabarit ne doit pas transporter le message : il peut peser 1 MiB")
+	}
+
+	// Discord refuse un champ de valeur vide, et « notify target test »
+	// n'envoie aucune métadonnée. Chaque champ optionnel doit donc avoir un
+	// repli, sinon la commande censée PROUVER la chaîne est la seule à échouer.
+	for _, guarded := range []string{"fields.hostname", "fields.type"} {
+		if !strings.Contains(DiscordEmbedBody, "{{#if "+guarded+" }}") {
+			t.Errorf("%s doit avoir un repli explicite", guarded)
+		}
+	}
+
+	// Le tiret de « job-id » doit être entre crochets : sans eux, le moteur de
+	// gabarit lit une soustraction et le rendu échoue en silence.
+	if !strings.Contains(DiscordEmbedBody, "fields.[job-id]") {
+		t.Error("job-id doit être écrit entre crochets")
+	}
+
+	// Un rendu où toutes les variables sont substituées doit être du JSON
+	// valide. C'est ce que le nœud enverra vraiment.
+	rendered := DiscordEmbedBody
+	for _, r := range []struct{ from, to string }{
+		{"{{ escape title }}", "vzdump backup status (pve.home): backup failed"},
+		{"{{#if fields.hostname }}{{ escape fields.hostname }}{{else}}n/a{{/if}}", "pve"},
+		{"{{#if fields.type }}{{ escape fields.type }}{{else}}test{{/if}}", "vzdump"},
+		{"{{ escape severity }}", "error"},
+	} {
+		rendered = strings.Replace(rendered, r.from, r.to, 1)
+	}
+	// La branche conditionnelle du job planifié, non prise.
+	if i := strings.Index(rendered, "{{#if fields.[job-id] }}"); i >= 0 {
+		j := strings.Index(rendered, "{{/if}}")
+		rendered = rendered[:i] + rendered[j+len("{{/if}}"):]
+	}
+	if strings.Contains(rendered, "{{") {
+		t.Fatalf("variable non couverte par le test : %s", rendered)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(rendered), &out); err != nil {
+		t.Fatalf("le rendu n'est pas du JSON valide : %v\n%s", err, rendered)
+	}
+	if len(rendered) > 1000 {
+		t.Errorf("rendu de %d octets : trop gros pour un gabarit à taille fixe", len(rendered))
 	}
 }
 

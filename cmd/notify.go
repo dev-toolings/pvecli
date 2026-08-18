@@ -351,6 +351,17 @@ et que les deux rendent une erreur qui ne les nomme pas :
      « Content-Type: application/json ». Sans corps déclaré, PVE poste son rendu
      texte, Discord répond 400, et RIEN n'apparaît dans le salon, l'échec le
      plus silencieux de la chaîne.
+  3. Le corps ne transporte PAS le message. Un rapport vzdump est plafonné à
+     1 MiB côté PVE, un embed Discord à 4096 caractères : l'inclure ferait
+     échouer la requête les jours de gros incident, donc pile quand l'alerte
+     comptait. Le message posé pèse environ 300 octets, toujours.
+
+Le rendu est un EMBED, pas du texte. Discord ne rend aucun tableau markdown, et
+un bloc de code aligné défile horizontalement sur téléphone. Les champs
+« inline » d'un embed sont la seule primitive qui se réorganise seule : trois
+colonnes sur écran large, une seule sur mobile. Ce que tu reçois, c'est le titre
+de l'événement, le nœud, la source, la sévérité, et le job quand il est
+planifié. Le détail complet reste dans les tâches du nœud.
 
 Le gabarit passe le titre et le message par le filtre « escape » du moteur de
 rendu. Sans lui, un message contenant un guillemet fabriquerait un JSON invalide

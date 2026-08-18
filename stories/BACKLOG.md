@@ -1084,3 +1084,15 @@ repart malgré tout avec un 403 sur cette famille : même mur que PVX-086.
 
 **Fixtures** : `testdata/notify-*.json` sont de **vraies captures** du nœud en
 PVE 9.2.6, prises après le montage de la cible Discord.
+
+**Suite, le 18-08-2026 : le rendu.** Le premier corps posé était
+`{"content":"**{{ title }}**\n{{ message }}"}`. Illisible sur téléphone, et
+surtout dangereux : `MAX_LOG_SIZE` vaut **1 MiB** côté `VZDump.pm` quand un
+embed Discord plafonne à **4096 caractères** de description. Le message brut
+faisait donc échouer la requête en 400 les jours de gros incident, c'est-à-dire
+quand l'alerte comptait. Remplacé par un **embed** à champs `inline`, la seule
+primitive Discord qui se réorganise sur mobile : Discord ne rend aucun tableau
+markdown, et un bloc de code aligné défile horizontalement. Le corps ne
+transporte plus `message` et pèse ~300 octets, mesuré sur un envoi de test comme
+sur un vrai `vzdump` en échec. Gabarit vérifié en interceptant le rendu sur un
+récepteur HTTP local du nœud, pour ne pas itérer dans le salon.

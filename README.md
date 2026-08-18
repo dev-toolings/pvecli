@@ -558,6 +558,15 @@ And a webhook's `url` is validated against a URL regex, so a whole template
 `--discord` therefore splits the URL: the stable part stays in the clear, the id
 and token go into two secrets the node never renders back.
 
+The body it writes is a Discord **embed**, and deliberately does not carry
+`message`. A vzdump report is capped at 1 MiB node-side while an embed caps at
+4096 characters, so including it would fail the request with a 400 on exactly
+the days a backup went badly wrong. The posted message is ~300 bytes whatever
+happens: event title, node, source, severity, and the job id when the run was
+scheduled. Full detail stays one tap away in the node's task list. An embed is
+also the only Discord primitive that reflows on a phone, since Discord renders
+no markdown tables and a code block scrolls sideways on a narrow screen.
+
 One caveat worth stating: `notify target test` posts **straight to the target**
 and bypasses matchers. A test that arrives proves the downstream half, never the
 routing. Proving the whole chain needs a real event.
