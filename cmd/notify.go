@@ -626,7 +626,7 @@ Endpoint : DELETE /api2/json/cluster/notifications/endpoints/webhook/{name} (Sys
 func newNotifyMatcherCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "matcher",
-		Short: "Routage : lister, créer, supprimer",
+		Short: "Routage : lister, créer, activer, désactiver, supprimer",
 		Long: `Gère le routage des notifications (/cluster/notifications/matchers).
 
 Un matcher est ce qui relie un événement à une cible. Sans lui, une cible
@@ -637,7 +637,39 @@ s'occupe pas des cibles ajoutées ensuite : ajouter un webhook ne le modifie pas
 il faut son propre matcher.`,
 		Args: usage(cobra.NoArgs),
 	}
-	c.AddCommand(newNotifyMatcherListCmd(), newNotifyMatcherCreateCmd(), newNotifyMatcherRmCmd())
+	c.AddCommand(newNotifyMatcherListCmd(), newNotifyMatcherCreateCmd(), newNotifyMatcherToggleCmd(true), newNotifyMatcherToggleCmd(false), newNotifyMatcherRmCmd())
+	return c
+}
+
+func newNotifyMatcherToggleCmd(disabled bool) *cobra.Command {
+	verb, state := "disable", "désactivé"
+	if !disabled {
+		verb, state = "enable", "actif"
+	}
+	c := &cobra.Command{
+		Use:   verb + " <nom>",
+		Short: map[bool]string{true: "Désactive un matcher sans le supprimer", false: "Réactive un matcher désactivé"}[disabled],
+		Args:  usage(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			client, err := newClient(cmd)
+			if err != nil {
+				return err
+			}
+			if err := client.SetNotifyMatcherDisabled(cmd.Context(), name, disabled); err != nil {
+				return err
+			}
+			m, err := client.NotifyMatcherByName(cmd.Context(), name)
+			if err != nil {
+				return err
+			}
+			if m.IsEnabled() == disabled {
+				return fmt.Errorf("le nœud n'a pas appliqué l'état demandé au matcher %q", name)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "matcher %s : %s\n", name, state)
+			return err
+		},
+	}
 	return c
 }
 

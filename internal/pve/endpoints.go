@@ -192,6 +192,7 @@ var (
 	epNotifyMatchers   = endpoint{"GET", "/cluster/notifications/matchers"}
 	epNotifyMatcherNew = endpoint{"POST", "/cluster/notifications/matchers"}
 	epNotifyMatcher    = endpoint{"GET", "/cluster/notifications/matchers/{name}"}
+	epNotifyMatcherSet = endpoint{"PUT", "/cluster/notifications/matchers/{name}"}
 	epNotifyMatcherDel = endpoint{"DELETE", "/cluster/notifications/matchers/{name}"}
 
 	epTasks      = endpoint{"GET", "/nodes/{node}/tasks"}

@@ -455,6 +455,18 @@ func (c *Client) CreateNotifyMatcher(ctx context.Context, o MatcherOptions) erro
 	return c.post(ctx, epNotifyMatcherNew, nil, o.Values(), nil)
 }
 
+// SetNotifyMatcherDisabled active ou désactive un matcher existant.
+// PUT /cluster/notifications/matchers/{name}
+func (c *Client) SetNotifyMatcherDisabled(ctx context.Context, name string, disabled bool) error {
+	v := url.Values{}
+	if disabled {
+		v.Set("disable", "1")
+	} else {
+		v.Set("disable", "0")
+	}
+	return c.post(ctx, epNotifyMatcherSet, []string{name}, v, nil)
+}
+
 // DeleteNotifyMatcher supprime un matcher. Les cibles qu'il routait restent
 // déclarées et ne reçoivent plus rien. Le silence qui suit ressemble à un
 // fonctionnement normal.
