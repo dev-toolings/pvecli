@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -24,6 +25,16 @@ import (
 const (
 	// DecisionAllow lets an identity through after it authenticates.
 	DecisionAllow = "allow"
+	// DecisionBypass lets a request through with no authentication at all.
+	//
+	// It exists because a hostname protected by Access almost always has a few
+	// paths that cannot pass a door: a webhook a third party posts to, a health
+	// probe, an API a CLI reaches with its own bearer token. Without it the
+	// choice is between leaving the whole hostname open and breaking those.
+	//
+	// It is the one decision that protects nothing, so it is never a default and
+	// never inferred: the caller asks for it by name.
+	DecisionBypass = "bypass"
 	// DecisionServiceAuth is what a service token needs. It is NOT "allow":
 	// an allow policy containing a service token would let the request through
 	// without any authentication at all — the opposite of the intent.
@@ -60,10 +71,55 @@ func (c *Client) AppByDomain(ctx context.Context, domain string) (App, error) {
 	if err != nil {
 		return App{}, err
 	}
+	// Exact first. Cloudflare stores the domain with its optional path, and a
+	// hostname and a path under it are different applications that Access reads
+	// from the most specific to the most general — so the bare hostname must
+	// resolve to the application registered under that exact name, not to
+	// whichever path application happens to sit beneath it.
 	for _, a := range apps {
-		// Cloudflare stores the domain with its optional path; a bare hostname
-		// matches the application that covers it.
-		if a.Domain == domain || strings.HasPrefix(a.Domain, domain+"/") {
+		if a.Domain == domain {
+			return a, nil
+		}
+	}
+	// No exact match: a single application under this hostname is
+	// unambiguous, so naming the hostname alone still reaches it.
+	var under []App
+	for _, a := range apps {
+		if strings.HasPrefix(a.Domain, domain+"/") {
+			under = append(under, a)
+		}
+	}
+	switch len(under) {
+	case 0:
+		return App{}, fmt.Errorf("aucune application Access pour « %s » : %w", domain, ErrNotFound)
+	case 1:
+		return under[0], nil
+	}
+	// Refused rather than picked. Sorted, so the same account always produces
+	// the same message rather than one that depends on map iteration order.
+	names := make([]string, 0, len(under))
+	for _, a := range under {
+		names = append(names, a.Domain)
+	}
+	sort.Strings(names)
+	return App{}, fmt.Errorf("« %s » ne désigne aucune application : %d applications existent sous ce nom (%s).\n"+
+		"Nomme celle que tu vises, chemin compris", domain, len(under), strings.Join(names, ", "))
+}
+
+// AppByExactDomain finds the application registered under exactly this name.
+//
+// It exists for the collision check before a create: an application on a
+// hostname and one on a path beneath it are legitimate together — that is how a
+// webhook or a health probe is exempted from a door — so the prefix match
+// AppByDomain falls back to would refuse the very pattern the documentation
+// recommends.
+func (c *Client) AppByExactDomain(ctx context.Context, domain string) (App, error) {
+	apps, err := c.Apps(ctx)
+	if err != nil {
+		return App{}, err
+	}
+	for _, a := range apps {
+		if a.Domain == domain {
 			return a, nil
 		}
 	}
@@ -91,7 +147,11 @@ type Rule struct {
 	Email        *EmailRule        `json:"email,omitempty"`
 	EmailDomain  *EmailDomainRule  `json:"email_domain,omitempty"`
 	ServiceToken *ServiceTokenRule `json:"service_token,omitempty"`
+	Everyone     *EveryoneRule     `json:"everyone,omitempty"`
 }
+
+// EveryoneRule matches every request. Cloudflare expects an empty object.
+type EveryoneRule struct{}
 
 type EmailRule struct {
 	Email string `json:"email"`
@@ -112,6 +172,11 @@ func IncludeEmail(address string) Rule { return Rule{Email: &EmailRule{Email: ad
 func IncludeEmailDomain(domain string) Rule {
 	return Rule{EmailDomain: &EmailDomainRule{Domain: domain}}
 }
+
+// IncludeEveryone matches every request. It is only meaningful under
+// DecisionBypass: under "allow" it would admit anyone who authenticates with
+// any identity at all, which reads like a restriction and is not one.
+func IncludeEveryone() Rule { return Rule{Everyone: &EveryoneRule{}} }
 
 // IncludeServiceToken matches one service token — a CLI, not a person.
 func IncludeServiceToken(id string) Rule {
@@ -138,6 +203,8 @@ func (p Policy) Describe() string {
 			parts = append(parts, "@"+r.EmailDomain.Domain)
 		case r.ServiceToken != nil:
 			parts = append(parts, "service token "+r.ServiceToken.TokenID)
+		case r.Everyone != nil:
+			parts = append(parts, "tout le monde")
 		}
 	}
 	if len(parts) == 0 {
@@ -151,11 +218,25 @@ func (p Policy) Validate() error {
 	if len(p.Include) == 0 {
 		return fmt.Errorf("une policy sans include n'admet personne — et ne protège donc rien")
 	}
-	hasToken := false
+	hasToken, hasEveryone := false, false
 	for _, r := range p.Include {
 		if r.ServiceToken != nil {
 			hasToken = true
 		}
+		if r.Everyone != nil {
+			hasEveryone = true
+		}
+	}
+	// The same mistake as a service token under "allow", and worse: "everyone"
+	// there admits any identity from any provider, which reads like a
+	// restriction and is not one. Bypass is how you say "no door".
+	if hasEveryone && p.Decision != DecisionBypass {
+		return fmt.Errorf("« tout le monde » n'a de sens que sous la décision « %s » — "+
+			"sous « %s » elle admettrait n'importe quelle identité, ce qui ressemble à une "+
+			"restriction sans en être une", DecisionBypass, p.Decision)
+	}
+	if p.Decision == DecisionBypass && !hasEveryone {
+		return fmt.Errorf("une policy « %s » ne filtre personne : son include doit être « tout le monde »", DecisionBypass)
 	}
 	// This is the mistake worth encoding. A service token inside an `allow`
 	// policy is accepted by the API, and lets every request through with no

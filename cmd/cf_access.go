@@ -80,9 +80,12 @@ Endpoint : POST /accounts/{account}/access/apps`,
 			ctx := cmd.Context()
 			errW := cmd.ErrOrStderr()
 
-			// PRE-READ: two applications on one hostname is a state whose
-			// effective policy nobody can predict from the outside.
-			if existing, err := client.AppByDomain(ctx, domain); err == nil {
+			// PRE-READ: two applications on the SAME name is a state whose
+			// effective policy nobody can predict from the outside. An
+			// application on a path beneath an existing one is a different
+			// thing entirely, and it is the documented way to exempt a webhook
+			// or a probe from a door — so the check is on the exact name.
+			if existing, err := client.AppByExactDomain(ctx, domain); err == nil {
 				return fmt.Errorf("une application Access couvre déjà « %s » (%s)", domain, existing.ID)
 			}
 
@@ -235,6 +238,7 @@ func newCFAccessPolicyCmd() *cobra.Command {
 func newCFAccessPolicyAddCmd() *cobra.Command {
 	var appDomain, name, serviceToken string
 	var emails, emailDomains []string
+	var bypass bool
 
 	c := &cobra.Command{
 		Use:   "add",
@@ -252,16 +256,35 @@ pvecli la pose automatiquement avec --service-token, et REFUSE de mettre un
 service token dans une policy « allow » : ça laisserait passer sans aucune
 authentification, ce qui est l'inverse de l'intention.
 
+Un chemin qui ne peut pas passer de porte — un webhook qu'un tiers appelle, une
+sonde, une API qu'une CLI atteint avec son propre jeton — prend --bypass :
+
+  pvecli cf access app create app.exemple.tld/webhook --name "webhook (bypass)"
+  pvecli cf access policy add --app app.exemple.tld/webhook --bypass
+
+Access lit du chemin le plus spécifique au plus général, donc ce bypass ouvre ce
+chemin-là et rien d'autre. Sans lui, le choix se réduit à laisser le hostname
+entier ouvert ou à casser ces appels.
+
 Endpoint : POST /accounts/{account}/access/apps/{app}/policies`,
 		Args: usage(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if appDomain == "" {
 				return &exitError{code: pve.ExitUsage, msg: "--app est obligatoire, ex. --app pve.exemple.tld"}
 			}
-			if len(emails) == 0 && len(emailDomains) == 0 && serviceToken == "" {
+			if len(emails) == 0 && len(emailDomains) == 0 && serviceToken == "" && !bypass {
 				return &exitError{code: pve.ExitUsage,
-					msg: "il faut dire QUI passe : --email, --email-domain ou --service-token.\n" +
+					msg: "il faut dire QUI passe : --email, --email-domain, --service-token ou --bypass.\n" +
 						"Une policy sans include n'admet personne."}
+			}
+			// --bypass is the absence of a door. Combining it with anything that
+			// names who passes would describe two opposite intentions at once,
+			// and the permissive one would win silently.
+			if bypass && (len(emails) > 0 || len(emailDomains) > 0 || serviceToken != "") {
+				return &exitError{code: pve.ExitUsage,
+					msg: "--bypass ouvre le chemin à tout le monde : le combiner avec --email,\n" +
+						"--email-domain ou --service-token décrirait deux intentions contraires.\n" +
+						"Fais-en deux policies, ou choisis."}
 			}
 			// Mixing a service token with people in one policy cannot work: the
 			// decision would have to be two things at once.
@@ -285,6 +308,10 @@ Endpoint : POST /accounts/{account}/access/apps/{app}/policies`,
 			}
 
 			policy := cf.Policy{Name: name, Decision: cf.DecisionAllow}
+			if bypass {
+				policy.Decision = cf.DecisionBypass
+				policy.Include = append(policy.Include, cf.IncludeEveryone())
+			}
 			if serviceToken != "" {
 				token, err := client.ServiceTokenByName(ctx, serviceToken)
 				if err != nil {
@@ -338,6 +365,7 @@ Endpoint : POST /accounts/{account}/access/apps/{app}/policies`,
 	f.StringSliceVar(&emails, "email", nil, "adresse admise — répétable")
 	f.StringSliceVar(&emailDomains, "email-domain", nil, "domaine d'adresses admis — répétable")
 	f.StringVar(&serviceToken, "service-token", "", "nom d'un service token — pose une policy « service auth »")
+	f.BoolVar(&bypass, "bypass", false, "ouvre ce chemin sans aucune authentification — pour un webhook, une sonde ou une API à jeton propre")
 	addWriteFlags(c)
 	addRenderFlags(c)
 	return c

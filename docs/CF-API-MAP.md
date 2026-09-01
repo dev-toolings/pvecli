@@ -69,6 +69,32 @@ Base : `https://api.cloudflare.com/client/v4`
    C'est le piège le plus cher du lot : il ne produit aucune erreur, et son
    symptôme est que tout fonctionne — pour n'importe qui.
 
+6. **Un hostname protégé a presque toujours des chemins qui ne peuvent pas
+   passer de porte.** Un webhook qu'un tiers appelle, une sonde de santé, une
+   API qu'une CLI atteint avec son propre jeton : aucun de ces appelants ne sait
+   faire du SSO. Sans une policy `bypass`, le choix se réduit à laisser le
+   hostname entier ouvert ou à casser ces appels — et c'est le premier qui
+   arrive en pratique.
+
+   `bypass` prend un include `{"everyone": {}}`, l'objet vide. C'est la seule
+   décision qui ne protège rien, donc `cf access policy add --bypass` l'écrit en
+   toutes lettres et `Policy.Validate` refuse `everyone` sous n'importe quelle
+   autre décision : sous `allow`, elle admettrait n'importe quelle identité de
+   n'importe quel fournisseur — ce qui ressemble à une restriction sans en être
+   une.
+
+7. **Un hostname et un chemin sous ce hostname sont deux applications
+   distinctes.** Access les lit de la plus spécifique à la plus générale, donc
+   `app.exemple.tld` et `app.exemple.tld/webhook` coexistent — c'est même le
+   motif recommandé pour exempter un webhook d'une porte.
+
+   Résoudre le hostname nu vers la première application trouvée sous lui casse
+   ce motif : `app create app.exemple.tld` se voyait refusé au motif qu'une
+   application couvrait déjà ce nom, en désignant le bypass `/health` posé
+   juste avant. La résolution passe donc par le nom exact d'abord, ne retombe
+   sur un chemin que s'il est unique, et refuse plutôt que de choisir quand il
+   y en a plusieurs.
+
 ## Le tunnel expose, Access protège
 
 Ce sont deux objets indépendants, et rien côté Cloudflare n'oblige à poser le
