@@ -63,6 +63,7 @@ func newClient(cmd *cobra.Command) (*pve.Client, error) {
 		Trust: pve.TrustOptions{
 			Fingerprint: eff.TLS.Fingerprint,
 			CAFile:      eff.TLS.CAFile,
+			ServerName:  eff.TLS.ServerName,
 			Insecure:    eff.Insecure,
 		},
 	})

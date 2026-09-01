@@ -112,6 +112,7 @@ Endpoints : POST /access/ticket, POST /access/users, POST /access/users/{id}/tok
 				Trust: pve.TrustOptions{
 					Fingerprint: eff.TLS.Fingerprint,
 					CAFile:      eff.TLS.CAFile,
+					ServerName:  eff.TLS.ServerName,
 					Insecure:    eff.Insecure,
 				},
 			}

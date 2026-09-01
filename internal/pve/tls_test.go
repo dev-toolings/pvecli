@@ -150,3 +150,39 @@ func TestFetchCertificate(t *testing.T) {
 		t.Errorf("Fingerprint = %q, want %q", got, fp)
 	}
 }
+
+// A node reached by address while holding a certificate issued for a routable
+// name is the Tailscale/ACME case: the route must stay local and the
+// verification must stay real, which is exactly what ServerName buys.
+func TestTLSConfigServerNameOverride(t *testing.T) {
+	t.Run("système", func(t *testing.T) {
+		cfg, err := tlsConfig(TrustOptions{ServerName: "pve.example.ts.net"}, "192.168.1.23:8006")
+		if err != nil {
+			t.Fatalf("tlsConfig: %v", err)
+		}
+		if cfg.ServerName != "pve.example.ts.net" {
+			t.Fatalf("ServerName = %q, attendu pve.example.ts.net", cfg.ServerName)
+		}
+		if cfg.InsecureSkipVerify {
+			t.Fatal("la vérification doit rester active")
+		}
+	})
+
+	t.Run("empreinte ignore le nom", func(t *testing.T) {
+		// Pinning already answers the identity question, and more strictly.
+		// Honouring ServerName here would only add a way to weaken it.
+		cfg, err := tlsConfig(TrustOptions{
+			Fingerprint: strings.Repeat("ab", 32),
+			ServerName:  "pve.example.ts.net",
+		}, "192.168.1.23:8006")
+		if err != nil {
+			t.Fatalf("tlsConfig: %v", err)
+		}
+		if cfg.ServerName != "" {
+			t.Fatalf("ServerName = %q, attendu vide en mode épinglé", cfg.ServerName)
+		}
+		if cfg.VerifyPeerCertificate == nil {
+			t.Fatal("le vérificateur épinglé doit rester installé")
+		}
+	})
+}

@@ -84,6 +84,15 @@ type Context struct {
 type TLS struct {
 	Fingerprint string `yaml:"fingerprint,omitempty"`
 	CAFile      string `yaml:"ca_file,omitempty"`
+
+	// ServerName is the name the certificate is verified against, when it is
+	// not the one in the endpoint. A node reached by LAN address but holding a
+	// certificate issued for a routable name — Tailscale, an ACME domain, a
+	// reverse proxy — cannot satisfy standard verification: the address is
+	// right and the name does not match. Setting the name the certificate
+	// actually carries restores real CA verification without giving up the
+	// direct address, and without pinning a certificate that will be renewed.
+	ServerName string `yaml:"server_name,omitempty"`
 }
 
 // DefaultManagedTag is the tag the lab repository puts on everything Terraform
@@ -125,6 +134,7 @@ var WritableKeys = []string{
 	"insecure",
 	"tls.fingerprint",
 	"tls.ca_file",
+	"tls.server_name",
 	"iac.terraform_dir",
 	"iac.ansible_dir",
 	"iac.managed_tag",
@@ -152,6 +162,8 @@ func SetKey(c *Context, key, value string) error {
 		c.TLS.Fingerprint = value
 	case "tls.ca_file":
 		c.TLS.CAFile = value
+	case "tls.server_name":
+		c.TLS.ServerName = value
 
 	// Absolutised on the way in. A relative path in a config file resolves
 	// against whatever directory the operator happened to be in, so the same

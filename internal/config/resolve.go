@@ -111,6 +111,7 @@ func Resolve(fl *pflag.FlagSet, f *File) (*Effective, error) {
 	e.Node = set("node", pick(fl, "node", "", c.Node, ""))
 	e.TLS.Fingerprint = set("tls.fingerprint", pick(fl, "", "", c.TLS.Fingerprint, ""))
 	e.TLS.CAFile = set("tls.ca_file", pick(fl, "", "", c.TLS.CAFile, ""))
+	e.TLS.ServerName = set("tls.server_name", pick(fl, "", "", c.TLS.ServerName, ""))
 
 	// --terraform-dir and --ansible-dir are declared by the `iac` commands only,
 	// so pick() is handed a flag name that most command lines do not have. It

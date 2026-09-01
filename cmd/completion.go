@@ -121,7 +121,7 @@ func loadCompletionInventory(cmd *cobra.Command) (*completionInventory, error) {
 		return inv, nil
 	}
 
-	inv, err := fetchCompletionInventory(cmd, eff.Endpoint, eff.TokenID, eff.TokenSecret, eff.Insecure, eff.TLS.Fingerprint, eff.TLS.CAFile)
+	inv, err := fetchCompletionInventory(cmd, eff.Endpoint, eff.TokenID, eff.TokenSecret, eff.Insecure, eff.TLS.Fingerprint, eff.TLS.CAFile, eff.TLS.ServerName)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func loadCompletionInventory(cmd *cobra.Command) (*completionInventory, error) {
 // That line is right for a command and catastrophic for a completion: it would
 // land in the middle of the prompt the operator is typing. Here stderr goes to
 // io.Discard, and the trace is never enabled.
-func fetchCompletionInventory(cmd *cobra.Command, endpoint, tokenID, secret string, insecure bool, fingerprint, caFile string) (*completionInventory, error) {
+func fetchCompletionInventory(cmd *cobra.Command, endpoint, tokenID, secret string, insecure bool, fingerprint, caFile, serverName string) (*completionInventory, error) {
 	client, err := pve.New(pve.Options{
 		Endpoint: endpoint,
 		TokenID:  tokenID,
@@ -145,6 +145,7 @@ func fetchCompletionInventory(cmd *cobra.Command, endpoint, tokenID, secret stri
 		Trust: pve.TrustOptions{
 			Fingerprint: fingerprint,
 			CAFile:      caFile,
+			ServerName:  serverName,
 			Insecure:    insecure,
 		},
 	})

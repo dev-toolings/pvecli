@@ -34,6 +34,14 @@ type TrustOptions struct {
 	Fingerprint string
 	CAFile      string
 	Insecure    bool
+
+	// ServerName overrides the name the certificate is checked against, while
+	// the connection still goes to the configured address. It is what lets a
+	// node be reached at 192.168.1.23 while presenting a certificate issued
+	// for pve.example.ts.net: the route stays local, the verification stays
+	// real. Ignored when an empreinte is pinned — pinning already answers the
+	// identity question, and it answers it more strictly.
+	ServerName string
 }
 
 // Mode reports which of the four behaviours the options select. Order matters:
@@ -81,10 +89,10 @@ func tlsConfig(t TrustOptions, host string) (*tls.Config, error) {
 		if !pool.AppendCertsFromPEM(pem) {
 			return nil, fmt.Errorf("%s ne contient aucun certificat PEM exploitable", t.CAFile)
 		}
-		return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
+		return &tls.Config{RootCAs: pool, ServerName: t.ServerName, MinVersion: tls.VersionTLS12}, nil
 
 	default:
-		return &tls.Config{MinVersion: tls.VersionTLS12}, nil
+		return &tls.Config{ServerName: t.ServerName, MinVersion: tls.VersionTLS12}, nil
 	}
 }
 
@@ -137,9 +145,22 @@ Soit le nœud a été réinstallé ou son certificat régénéré, soit quelqu'u
 s'est intercalé. Ne mets pas à jour l'empreinte sans avoir vérifié laquelle
 des deux hypothèses est vraie — depuis la console du nœud :
 
-  openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256
+  openssl x509 -in /etc/pve/local/pveproxy-ssl.pem -noout -fingerprint -sha256 -subject
+  openssl x509 -in /etc/pve/local/pve-ssl.pem      -noout -fingerprint -sha256
 
-Si le changement est légitime :
+Le premier fichier est celui qui compte : quand il existe, pveproxy le sert et
+ignore pve-ssl.pem. Un certificat ACME (Tailscale, Let's Encrypt, un proxy
+devant le nœud) atterrit là, et se renouvelle tout seul — auquel cas épingler
+la nouvelle empreinte ne fait que repousser cette erreur au prochain
+renouvellement. Vérifie le nom dans le sujet et préfère :
+
+  pvecli config set tls.server_name <le CN du certificat>
+  pvecli config set tls.fingerprint ""
+
+La connexion continue d'aller à l'adresse configurée, la vérification redevient
+celle d'une vraie CA, et un renouvellement ne casse plus rien.
+
+Si tu tiens à l'épinglage et que le changement est légitime :
   pvecli config trust`, e.Host, formatFingerprint(e.Want), formatFingerprint(e.Got))
 
 	case CertAbsent:
