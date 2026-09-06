@@ -1645,3 +1645,38 @@ pour l'outil qu'il encadre quand les deux ne construisent pas leur confiance de
 la même manière. Quand un outil tiers ne sait pas vérifier ce que pvecli
 vérifie, la réponse est de lui tendre une connexion déjà vérifiée, pas de lui
 apprendre à ne plus vérifier.
+
+## 2026-09-06 — une passerelle écrite en dur ne se trompe qu'une fois, mais partout
+
+**Le symptôme.** Sur la VM 225, `ohb-alerting` échouait toutes les 35 s sur
+`alerting.webhook_failed: The operation timed out`. Discord n'était pas en
+cause : depuis 225, 221 et 222, `curl -4 https://1.1.1.1/` ne rendait rien du
+tout. Les trois invités portaient `default via 192.168.1.1`, et l'ARP pour
+cette adresse restait FAILED — personne ne répond là. Le routeur du site est
+la Freebox, en `192.168.1.254`. L'IPv6 marchait, ce qui rendait le diagnostic
+plus lent : une partie du trafic sortait.
+
+**La cause.** `internal/catalog/assets/terraform/pvecli-base.tf` posait
+`default = "192.168.1.1"` pour `vm_ipv4_gateway`, et les deux modules en
+tiraient aussi les résolveurs (`servers = [var.vm_ipv4_gateway]`). Cette
+adresse était vraie sur le lab où le module a été écrit. Ailleurs, elle produit
+exactement ce qu'on a vu : un invité qui démarre, prend son adresse, répond au
+ping sur le LAN, et n'a aucune sortie. `vm declare` la recopiait ensuite dans
+`pvecli.auto.tfvars.json`, invité par invité — un littéral faux se duplique.
+
+**Ce qui a été écarté.** Changer le littéral pour `192.168.1.254` : c'est la
+même faute, décalée d'un cran, et elle serait fausse sur le lab suivant.
+
+**Ce qui a été fait.** Le module ne contient plus d'adresse. `pvecli iac
+scaffold` rend les deux défauts au moment où il pose les fichiers, dans cet
+ordre : `iac.ipv4_gateway` / `iac.dns_servers` de la configuration, sinon la
+passerelle du pont du nœud lue par `GET /nodes/{node}/network` (le nœud sait :
+`vmbr0` porte `gateway: 192.168.1.254`), sinon `null` — et Terraform refuse
+franchement. Le rendu a lieu avant la comparaison « modifié localement », sans
+quoi tout lab dont la passerelle n'est pas celle du catalogue verrait son module
+signalé comme édité à la main.
+
+**Règle retenue.** Une valeur que le nœud connaît n'a pas à être devinée par le
+catalogue. Et quand elle ne peut pas être connue, le défaut honnête est `null`,
+qui échoue fort, pas une adresse plausible, qui échoue en silence trente jours
+plus tard.

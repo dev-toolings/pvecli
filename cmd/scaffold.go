@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dev-toolings/pvecli/internal/catalog"
+	"github.com/dev-toolings/pvecli/internal/config"
 	"github.com/dev-toolings/pvecli/internal/iac"
 	"github.com/dev-toolings/pvecli/internal/output"
 )
@@ -79,7 +80,13 @@ Pour la même raison, les collections dont les rôles ont besoin sont listées d
 « pvecli-requirements.yml » : un dossier existant a déjà son requirements.yml, et
 l'écraser retirerait silencieusement les collections qu'il déclarait.
 
-  ansible-galaxy collection install -r <ansible_dir>/pvecli-requirements.yml`,
+  ansible-galaxy collection install -r <ansible_dir>/pvecli-requirements.yml
+
+La passerelle et les résolveurs du site ne sont pas écrits dans le catalogue :
+ils sont rendus ici. « iac.ipv4_gateway » et « iac.dns_servers » gagnent s'ils
+sont posés ; sinon le nœud est interrogé (GET /nodes/{node}/network, la
+passerelle de son pont) ; sinon le défaut reste null et Terraform refuse — une
+adresse plausible mais fausse route les invités vers le vide sans rien dire.`,
 		Args: usage(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eff, err := resolveConfig(cmd)
@@ -93,12 +100,15 @@ l'écraser retirerait silencieusement les collections qu'il déclarait.
 				return err
 			}
 
-			files, err := scaffoldPlan(eff.IaC.TerraformDir, eff.IaC.AnsibleDir)
+			errW := cmd.ErrOrStderr()
+			site := resolveSite(cmd, eff)
+			_, _ = fmt.Fprintln(errW, siteLine(site))
+
+			files, err := scaffoldPlan(eff.IaC.TerraformDir, eff.IaC.AnsibleDir, site)
 			if err != nil {
 				return err
 			}
 
-			errW := cmd.ErrOrStderr()
 			var modified []string
 			for _, f := range files {
 				if f.state == fileModified {
@@ -170,7 +180,7 @@ Ensuite, dans cet ordre :
 // scaffoldPlan resolves every embedded asset to its destination and reads what
 // is already there. Nothing is written by this function: the caller decides,
 // and --dry-run must be able to print the exact same list.
-func scaffoldPlan(terraformDir, ansibleDir string) ([]scaffoldFile, error) {
+func scaffoldPlan(terraformDir, ansibleDir string, site iac.Site) ([]scaffoldFile, error) {
 	hasProvider, err := declaresProxmoxProvider(terraformDir)
 	if err != nil {
 		return nil, err
@@ -203,6 +213,9 @@ func scaffoldPlan(terraformDir, ansibleDir string) ([]scaffoldFile, error) {
 		body, err := catalog.Assets.ReadFile(path)
 		if err != nil {
 			return err
+		}
+		if strings.HasPrefix(rel, "terraform/") {
+			body = iac.RenderTerraform(body, site)
 		}
 		state, err := inspectFile(dst, body)
 		if err != nil {
@@ -261,6 +274,63 @@ func declaresProxmoxProvider(dir string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// resolveSite answers the one question the embedded module cannot: which
+// gateway, and which resolvers, the guests of THIS lab must use.
+//
+// Order, and why: the configuration wins, because an operator who typed
+// `pvecli config set iac.ipv4_gateway` has already met the case where the
+// node's own route is not the guests' route. Failing that, the node is asked —
+// it carries the answer in the `gateway` of its bridge, and asking beats
+// guessing. Failing that too, nothing: the module renders a null default and
+// Terraform refuses, which is the honest outcome. A literal fallback is what
+// produced guests routed to an address nobody answers on.
+//
+// No error is returned. Scaffolding must stay possible with no credential and
+// no node reachable — writing the module is a local gesture. What the operator
+// gets in that case is a line saying the gateway is unknown, and the command
+// to fix it.
+func resolveSite(cmd *cobra.Command, eff *config.Effective) iac.Site {
+	site := iac.Site{DNSServers: eff.IaC.DNSServers}
+
+	if eff.IaC.IPv4Gateway != "" {
+		site.IPv4Gateway, site.Source = eff.IaC.IPv4Gateway, "iac.ipv4_gateway"
+		return site
+	}
+	if eff.Node == "" {
+		return site
+	}
+	client, err := newClient(cmd)
+	if err != nil {
+		return site
+	}
+	netcfg, err := client.Network(cmd.Context(), eff.Node, "")
+	if err != nil {
+		return site
+	}
+	gw, iface := iac.GatewayFromNetwork(netcfg.Ifaces)
+	if gw == "" {
+		return site
+	}
+	site.IPv4Gateway, site.Source = gw, fmt.Sprintf("%s de %s", iface, eff.Node)
+	return site
+}
+
+// siteLine is what scaffold prints about the network it just wrote in. It names
+// the source: « 192.0.2.254 lu sur vmbr0 » is checkable, « 192.0.2.254 » is not.
+func siteLine(site iac.Site) string {
+	if site.IPv4Gateway == "" {
+		return `passerelle du site INCONNUE — « vm_ipv4_gateway » reste à null, et
+« terraform plan » refusera de router les invités. Pose-la :
+
+  pvecli config set iac.ipv4_gateway <ip>   puis relance « pvecli iac scaffold »`
+	}
+	line := fmt.Sprintf("passerelle du site : %s (%s)", site.IPv4Gateway, site.Source)
+	if len(site.DNSServers) > 0 {
+		return line + fmt.Sprintf(" — résolveurs : %s", strings.Join(site.DNSServers, ", "))
+	}
+	return line + " — résolveurs : la passerelle"
 }
 
 // files2data is what `-o json` renders: the plan, without the file bodies.

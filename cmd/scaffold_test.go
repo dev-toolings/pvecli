@@ -201,3 +201,66 @@ func TestScaffoldIsIdempotent(t *testing.T) {
 		t.Errorf("le second passage doit annoncer zéro écriture :\n%s", stderr)
 	}
 }
+
+// La passerelle du site n'est plus un littéral du catalogue : elle vient de la
+// configuration (ou du nœud), et le module posé ne doit contenir aucune adresse
+// écrite en dur — c'est exactement ce qui avait routé les invités vers une
+// passerelle inexistante.
+func TestScaffoldWritesTheSiteGateway(t *testing.T) {
+	tfDir, ansDir := t.TempDir(), t.TempDir()
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	doc := "current_context: test\ncontexts:\n  test:\n    iac:\n" +
+		"      terraform_dir: " + tfDir + "\n" +
+		"      ansible_dir: " + ansDir + "\n" +
+		"      ipv4_gateway: 192.0.2.254\n" +
+		"      dns_servers: [192.0.2.53]\n"
+	if err := os.WriteFile(cfg, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PVECLI_CONFIG", cfg)
+
+	if _, stderr, err := run(t, "iac", "scaffold"); err != nil {
+		t.Fatalf("iac scaffold : %v\n%s", err, stderr)
+	}
+
+	base, err := os.ReadFile(filepath.Join(tfDir, "pvecli-base.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`default = "192.0.2.254"`, `default = ["192.0.2.53"]`} {
+		if !strings.Contains(string(base), want) {
+			t.Errorf("pvecli-base.tf sans %q :\n%s", want, base)
+		}
+	}
+
+	entries, err := filepath.Glob(filepath.Join(tfDir, "*.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range entries {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "192.168.1.") {
+			t.Errorf("%s contient une adresse en dur", f)
+		}
+	}
+}
+
+// Sans nœud joignable et sans clé de configuration, scaffold écrit quand même —
+// mais avec un défaut nul, jamais une passerelle inventée.
+func TestScaffoldWithoutSiteLeavesTheGatewayNull(t *testing.T) {
+	tfDir, _ := scaffoldDirs(t)
+
+	if _, stderr, err := run(t, "iac", "scaffold"); err != nil {
+		t.Fatalf("iac scaffold : %v\n%s", err, stderr)
+	}
+	base, err := os.ReadFile(filepath.Join(tfDir, "pvecli-base.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(base), "default = null # pvecli:ipv4_gateway") {
+		t.Errorf("le défaut doit rester nul :\n%s", base)
+	}
+}

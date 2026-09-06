@@ -13,7 +13,7 @@ variable "lxcs" {
     cores   = number
     memory  = number # MIBIOCTETS. 8 Go = 8192. Écrire 8 donne 8 Mio.
     disk    = optional(number, 8)
-    ip      = optional(string, "dhcp") # "192.168.1.220/24" ou "dhcp"
+    ip      = optional(string, "dhcp") # "192.0.2.220/24" ou "dhcp"
     gateway = optional(string)
     node    = optional(string)
     # ctid à cloner. Pas de défaut partagé comme var.template_vm_id côté VM :
@@ -82,7 +82,7 @@ resource "proxmox_virtual_environment_container" "pvecli" {
       }
     }
     dns {
-      servers = [var.vm_ipv4_gateway]
+      servers = var.vm_dns_servers != null ? var.vm_dns_servers : [var.vm_ipv4_gateway]
     }
     user_account {
       keys = [var.ssh_public_key]

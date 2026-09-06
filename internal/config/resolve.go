@@ -119,6 +119,12 @@ func Resolve(fl *pflag.FlagSet, f *File) (*Effective, error) {
 	e.IaC.TerraformDir = set("iac.terraform_dir", pick(fl, "terraform-dir", "", c.IaC.TerraformDir, ""))
 	e.IaC.AnsibleDir = set("iac.ansible_dir", pick(fl, "ansible-dir", "", c.IaC.AnsibleDir, ""))
 	e.IaC.ManagedTag = set("iac.managed_tag", pick(fl, "", "", c.IaC.ManagedTag, DefaultManagedTag))
+	e.IaC.IPv4Gateway = set("iac.ipv4_gateway", pick(fl, "", "", c.IaC.IPv4Gateway, ""))
+	e.IaC.DNSServers = c.IaC.DNSServers
+	e.Sources["iac.dns_servers"] = "fichier"
+	if len(c.IaC.DNSServers) == 0 {
+		e.Sources["iac.dns_servers"] = "défaut"
+	}
 	e.CF.AccountID = set("cf.account_id", pick(fl, "", EnvAccountID, c.CF.AccountID, ""))
 
 	if fl != nil && fl.Changed("insecure") {

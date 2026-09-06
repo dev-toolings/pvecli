@@ -9,6 +9,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -113,6 +114,14 @@ type IaC struct {
 
 	// ManagedTag overrides DefaultManagedTag for the ownership guard.
 	ManagedTag string `yaml:"managed_tag,omitempty"`
+
+	// IPv4Gateway and DNSServers are the site's network answers, and they are
+	// stored here for one reason: nothing else knows them for sure. Proxmox can
+	// be asked (the `gateway` of its bridge), and that is what `iac scaffold`
+	// does by default — these two keys exist for the lab where the node's own
+	// route is not the one the guests must take, and they win over the node.
+	IPv4Gateway string   `yaml:"ipv4_gateway,omitempty"`
+	DNSServers  []string `yaml:"dns_servers,omitempty"`
 }
 
 // CF locates the Cloudflare account the tunnels are created in.
@@ -138,6 +147,8 @@ var WritableKeys = []string{
 	"iac.terraform_dir",
 	"iac.ansible_dir",
 	"iac.managed_tag",
+	"iac.ipv4_gateway",
+	"iac.dns_servers",
 	"cf.account_id",
 	"secret_source",
 	"secret_command",
@@ -184,6 +195,21 @@ func SetKey(c *Context, key, value string) error {
 	case "iac.managed_tag":
 		c.IaC.ManagedTag = value
 
+	// The site's network, checked on the way in: a gateway that is not an IP
+	// address is a typo, and Terraform would only say so once the guest is
+	// already declared with it.
+	case "iac.ipv4_gateway":
+		if value != "" && net.ParseIP(value) == nil {
+			return fmt.Errorf("« iac.ipv4_gateway » attend une adresse IP, pas %q", value)
+		}
+		c.IaC.IPv4Gateway = value
+	case "iac.dns_servers":
+		servers, err := parseIPList(value)
+		if err != nil {
+			return fmt.Errorf("« iac.dns_servers » : %w", err)
+		}
+		c.IaC.DNSServers = servers
+
 	// The account id, and only the account id. The Cloudflare API token is a
 	// secret and follows the same rule as the PVE one: environment only, fed
 	// from the keychain, never written to a file this tool manages.
@@ -215,6 +241,23 @@ func SetKey(c *Context, key, value string) error {
 		return fmt.Errorf("clé inconnue %q ; clés acceptées : %s", key, strings.Join(WritableKeys, ", "))
 	}
 	return nil
+}
+
+// parseIPList reads « 192.0.2.1,192.0.2.2 » into a list of resolvers. An empty
+// value clears the key rather than storing a list of one empty string.
+func parseIPList(value string) ([]string, error) {
+	var out []string
+	for _, f := range strings.Split(value, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if net.ParseIP(f) == nil {
+			return nil, fmt.Errorf("%q n'est pas une adresse IP", f)
+		}
+		out = append(out, f)
+	}
+	return out, nil
 }
 
 // absPath turns a path typed on the command line into an absolute one,
