@@ -652,11 +652,24 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 		}
 	}
 
-	args := append([]string{verb}, extra...)
+	opts := []string{verb}
 	if verb == "apply" && yes {
-		args = append([]string{verb, "-auto-approve"}, extra...)
+		opts = append(opts, "-auto-approve")
 	}
 	tf.Env = terraformEnv(cmd, eff)
+	if terraformNeedsBridge(eff) {
+		bridge, err := startTerraformBridge(eff)
+		if err != nil {
+			return err
+		}
+		defer bridge.Close()
+		tf.Env = bridge.Env(tf.Env)
+		_, _ = fmt.Fprint(cmd.ErrOrStderr(), bridge.Explain(eff))
+		// Before the operator's own arguments: terraform stops reading flags at
+		// the first positional argument, and « apply <plan> » is one.
+		opts = append(opts, "-var", "proxmox_endpoint="+bridge.URL)
+	}
+	args := append(opts, extra...)
 
 	// The exact command line, so the operator can rerun it by hand. A wrapper
 	// that hides what it launched is a wrapper you cannot debug.

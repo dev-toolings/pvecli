@@ -1605,3 +1605,43 @@ se ressemblent de l'extérieur et ne se corrigent pas au même endroit. Avant de
 conclure à l'absence d'une valeur, il faut descendre jusqu'à la couche qui la
 produit ; ici trois couches séparaient le noyau invité de l'écran, et une seule
 était en cause.
+
+## 2026-09-06 — le provider Terraform ne parle pas la même confiance que pvecli
+
+**Le symptôme.** Le nœud sert depuis fin août un certificat Let's Encrypt émis
+pour `pve.tailbe559a.ts.net`, et pvecli le vérifie sans broncher grâce à
+`tls.server_name` : l'adresse reste `192.168.1.23`, le nom vérifié est celui du
+certificat. `pvecli iac plan`, lui, échouait sur chaque ressource avec
+« cannot validate certificate for 192.168.1.23 because it doesn't contain any
+IP SANs ». Le pré-vol de la commande était vert — c'est pvecli qui parle au nœud
+dans le pré-vol — et Terraform mourait juste après.
+
+**La cause.** Le provider bpg/proxmox a deux mots de vocabulaire pour la
+confiance : `insecure`, et le pool système de Go (donc `SSL_CERT_FILE`). Ni nom
+de serveur, ni empreinte épinglée. Tout ce que pvecli vérifie au-delà d'une CA,
+Terraform ne sait pas le reproduire, et le nom `*.ts.net` ne résout pas depuis
+un poste sans Tailscale — impossible de simplement mettre le nom dans
+`proxmox_endpoint`.
+
+**Ce qui a été écarté.** Exporter `insecure = true` quand `server_name` est posé :
+c'est le pipeline entier qui cesserait de vérifier pour satisfaire un outil.
+Une ligne dans `/etc/hosts` : elle marche, mais elle demande root, ne se
+versionne pas, et transforme une configuration pvecli en dépendance invisible
+du poste.
+
+**Ce qui a été fait.** `iac plan|apply` ouvre un relais sur `127.0.0.1:0` le
+temps de la commande. Le relais vérifie le nœud avec exactement les options de
+pvecli (`pve.ClientTLSConfig`), et Terraform reçoit `-var
+proxmox_endpoint=https://127.0.0.1:<port>`. Premier essai en `http://` : le
+provider refuse (« you must specify a secure endpoint »). Le relais parle donc
+TLS lui aussi, avec un certificat frappé au démarrage pour 127.0.0.1, dont la
+clé ne quitte pas la mémoire et dont le PEM part par `SSL_CERT_FILE` — le crochet
+qui portait déjà la CA de l'opérateur au provider. Le `-var` passe avant les
+arguments de l'opérateur : terraform arrête de lire les drapeaux au premier
+argument positionnel, et `apply <plan>` en est un.
+
+**Règle retenue.** Un pré-vol qui réussit avec le client de pvecli ne prouve rien
+pour l'outil qu'il encadre quand les deux ne construisent pas leur confiance de
+la même manière. Quand un outil tiers ne sait pas vérifier ce que pvecli
+vérifie, la réponse est de lui tendre une connexion déjà vérifiée, pas de lui
+apprendre à ne plus vérifier.

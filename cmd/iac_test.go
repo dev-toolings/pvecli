@@ -203,11 +203,11 @@ func stubTool(t *testing.T, name, stdout string) (calls string) {
 	dir := t.TempDir()
 	calls = filepath.Join(dir, "calls")
 	script := "#!/bin/sh\n" +
-		"{ printf 'argv: %s\\n' \"$*\"; printf 'TF_VAR_proxmox_api_token=%s\\n' \"$TF_VAR_proxmox_api_token\"; } >> " + calls + "\n" +
+		"{ printf 'argv: %s\\n' \"$*\"; printf 'TF_VAR_proxmox_api_token=%s\\n' \"$TF_VAR_proxmox_api_token\"; test -f \"$SSL_CERT_FILE\" && printf 'bridge-ca: present\\n'; } >> " + calls + "\n" +
 		"printf '%s\\n'\n"
 	if stdout != "" {
 		script = "#!/bin/sh\n" +
-			"{ printf 'argv: %s\\n' \"$*\"; printf 'TF_VAR_proxmox_api_token=%s\\n' \"$TF_VAR_proxmox_api_token\"; } >> " + calls + "\n" +
+			"{ printf 'argv: %s\\n' \"$*\"; printf 'TF_VAR_proxmox_api_token=%s\\n' \"$TF_VAR_proxmox_api_token\"; test -f \"$SSL_CERT_FILE\" && printf 'bridge-ca: present\\n'; } >> " + calls + "\n" +
 			"cat <<'EOS'\n" + stdout + "\nEOS\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil { //nolint:gosec // a test stub must be executable

@@ -115,8 +115,14 @@ fails if it is.
   command that does not poll the task to its `exitstatus` and then re-read the
   resource is considered non-compliant.
 - **Verified TLS, not `--insecure`.** Self-signed lab certificates are handled
-  by SHA-256 fingerprint pinning. `--insecure` exists, works, and complains
-  loudly on stderr every single time.
+  by SHA-256 fingerprint pinning; a node reached by LAN address but holding a
+  certificate issued for a routable name (Tailscale, ACME) is verified against
+  that name with `tls.server_name`. `--insecure` exists, works, and complains
+  loudly on stderr every single time. The bpg/proxmox Terraform provider knows
+  neither a server name nor a pinned fingerprint, so `pvecli iac plan|apply`
+  then opens a TLS listener on 127.0.0.1 for the duration of the run, verifies
+  the node itself and relays Terraform through it (`-var proxmox_endpoint`,
+  `SSL_CERT_FILE` on an ephemeral certificate) — never `insecure = true`.
 - **Least privilege.** A dedicated, expiring API token with `privsep=1` and the
   narrowest role that does the job. `root@pam` is never used.
 - **Secrets never touch disk.** The token secret lives in the OS keychain and
@@ -736,7 +742,8 @@ contexts:
     token_id: automation@pve!pvectl
     node: pve
     tls:
-      fingerprint: "9F:3D:1A:55:..."
+      fingerprint: "9F:3D:1A:55:..."      # self-signed node: pin it
+      # server_name: pve.example.ts.net  # ACME/Tailscale certificate reached by LAN address
     secret_command: pass show pve/token   # optional — its stdout IS the secret
     secret_source: command                # optional — pin the lookup to one source
 ```

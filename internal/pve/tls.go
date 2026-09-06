@@ -59,6 +59,14 @@ func (t TrustOptions) Mode() TrustMode {
 	}
 }
 
+// ClientTLSConfig is tlsConfig for a caller outside the package that must
+// verify the node exactly as the client does — the loopback bridge `pvecli
+// iac` opens for Terraform, whose provider knows neither a server name nor a
+// pinned fingerprint. host names the peer in error messages.
+func ClientTLSConfig(t TrustOptions, host string) (*tls.Config, error) {
+	return tlsConfig(t, host)
+}
+
 // tlsConfig turns the options into a *tls.Config.
 func tlsConfig(t TrustOptions, host string) (*tls.Config, error) {
 	switch t.Mode() {
