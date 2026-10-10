@@ -44,6 +44,10 @@ func fakePvecli(t *testing.T, binDir, notifyLine, refreshMarker string) {
 		"  echo '" + notifyLine + "'\n" +
 		"elif [ \"$1\" = update ] && [ \"$2\" = check ] && [ \"$3\" = --refresh ]; then\n" +
 		"  : > '" + refreshMarker + "'\n" +
+		"elif [ \"$1\" = node ] && [ \"$2\" = updates ] && [ \"$3\" = --notify ]; then\n" +
+		"  echo '" + notifyLine + "-NODE'\n" +
+		"elif [ \"$1\" = node ] && [ \"$2\" = updates ] && [ \"$3\" = --refresh ]; then\n" +
+		"  : > '" + refreshMarker + "-node'\n" +
 		"fi\n"
 	path := filepath.Join(binDir, "pvecli")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -87,18 +91,24 @@ func TestUpdateNotifySnippetPrintsNotifyLineAndBackgroundsRefresh(t *testing.T) 
 	if !strings.Contains(text, "FAKE-NOTIFY-LINE") {
 		t.Errorf("output = %q, want the --notify line on stdout — this is the exact bug this test exists to catch", text)
 	}
+	// The node's line goes through the same contract as the binary's.
+	if !strings.Contains(text, "FAKE-NOTIFY-LINE-NODE") {
+		t.Errorf("output = %q, want the node updates --notify line on stdout too", text)
+	}
 
-	// --refresh runs detached; give the orphaned background job a moment to
-	// actually execute before deciding it never ran.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, statErr := os.Stat(refreshMarker); statErr == nil {
-			return
+	// --refresh runs detached; give the orphaned background jobs a moment to
+	// actually execute before deciding they never ran.
+	for _, marker := range []string{refreshMarker, refreshMarker + "-node"} {
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			if _, statErr := os.Stat(marker); statErr == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: --refresh was never invoked in the background within 2s", filepath.Base(marker))
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("--refresh was never invoked in the background within 2s")
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }
 

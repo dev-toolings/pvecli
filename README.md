@@ -236,6 +236,11 @@ answer the prompt instantly and be allowed to wait on the network:
   the one allowed to reach GitHub (2s timeout), and it never prints anything,
   success or failure — it only updates the cache for the *next* terminal.
 
+The same snippet runs `pvecli node updates --notify` / `--refresh` for the
+default node, with a 6h cache keyed by context and node: one line when the node
+has pending updates or waits for a reboot, nothing otherwise. Re-run
+`pvecli update install-hook` once to pick it up on a poste wired before.
+
 The trade-off is deliberate: the notification is always one terminal behind
 the truth. See `cmd/assets/update-notify.sh` for why the backgrounding
 itself is written the way it is (avoiding zsh's own job-control noise).
@@ -727,6 +732,46 @@ dialog back, `nag status` says so, `nag off` replays in a second.
 Worth stating plainly: this circumvents a licence check. On a homelab it is
 inconsequential. In production the Community subscription is the clean path, and
 it is what opens the better-tested `pve-enterprise` repository.
+
+**APT repositories**, over the API this time (no SSH). A fresh install ships with
+`pve-enterprise` enabled; without a key `apt update` fails on it with a 401, and
+the node silently stops receiving Proxmox updates. Proxmox VE is free software
+(AGPLv3) and complete without a subscription: `no-subscription` is the public
+repository Proxmox publishes for exactly that use.
+
+```sh
+pvecli node repo ls                        # every stanza, then: is an enterprise repo still enabled?
+pvecli node repo no-subscription --dry-run # the writes, and the exact pvesh command that undoes each
+pvecli node repo no-subscription           # add no-subscription first, then disable enterprise
+```
+
+Additions come before disabling, so the node is never left without a Proxmox
+repository. Ceph follows the same rule **within its release**:
+`ceph-squid-enterprise` becomes `ceph-squid-no-subscription`, never Tentacle,
+because changing Ceph series is a major upgrade, not a repository change.
+Disabled stanzas stay in their files (`Enabled: false`). Privilege:
+`Sys.Modify` on `/nodes/{node}`; reading takes `Sys.Audit`.
+
+**Should I upgrade the node?**
+
+```sh
+pvecli node updates              # verdict, pve-manager installed → candidate, kernel, top packages
+pvecli node updates --all        # every pending package
+pvecli node updates --sync       # run `apt update` on the node first, and follow the task
+pvecli node updates --exit-code  # 0 up to date, 10 updates pending, 11 reboot required
+```
+
+The answer comes from the node's own package index, which PVE refreshes daily
+(`pve-daily-update.timer`); `--sync` refreshes it now. Besides the pending
+packages it reports whether the upgrade brings a new kernel, whether a kernel
+newer than the running one is **already** installed (reboot pending, upgrade or
+not), whether `pveproxy`/`pvedaemon` still run an older `pve-manager`, and any
+package that changes **major** version, which usually means a repository points
+at the next series. Listing the full set of pending updates takes `Sys.Modify`
+(`GET /apt/update`); without it the command falls back to the Proxmox packages
+of `/apt/versions` (`Sys.Audit`) and says the answer is partial. It never
+installs anything: on the node, `apt update && apt full-upgrade`, never
+`apt upgrade`.
 
 ## Configuration
 

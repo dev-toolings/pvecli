@@ -74,3 +74,12 @@ pvecli update check --notify 2>/dev/null
 # ceinture : `--refresh` ne dit déjà rien, en succès comme en échec, mais ça
 # garde un futur panic Go loin du prompt aussi.
 ( pvecli update check --refresh >/dev/null 2>&1 & ) 2>/dev/null
+
+# Même contrat, pour le NŒUD cette fois : « pvecli node updates » dit si le
+# Proxmox du nœud par défaut a des mises à jour en attente ou attend un
+# redémarrage. --notify lit le cache (une ligne ou rien), --refresh interroge
+# l'API en arrière-plan quand le cache a plus de 6 h. Sans nœud par défaut ou
+# sans secret, les deux se taisent : un poste qui ne pilote aucun nœud ne doit
+# rien voir de plus qu'avant.
+pvecli node updates --notify 2>/dev/null
+( pvecli node updates --refresh >/dev/null 2>&1 & ) 2>/dev/null

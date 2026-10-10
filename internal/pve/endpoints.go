@@ -156,6 +156,18 @@ var (
 	epNetworkApply  = endpoint{"PUT", "/nodes/{node}/network"}
 	epNetworkRevert = endpoint{"DELETE", "/nodes/{node}/network"}
 
+	// APT du nœud. Lecture des dépôts et des versions = Sys.Audit ; tout le
+	// reste, y compris la simple LISTE des mises à jour en attente, exige
+	// Sys.Modify sur /nodes/{node} (PVE::API2::APT, « list_updates »). C'est
+	// pour cela que « node updates » s'appuie d'abord sur /apt/versions, et
+	// traite /apt/update comme un complément. Voir internal/pve/apt.go.
+	epAptRepos      = endpoint{"GET", "/nodes/{node}/apt/repositories"}
+	epAptRepoAdd    = endpoint{"PUT", "/nodes/{node}/apt/repositories"}
+	epAptRepoChange = endpoint{"POST", "/nodes/{node}/apt/repositories"}
+	epAptUpdates    = endpoint{"GET", "/nodes/{node}/apt/update"}
+	epAptRefresh    = endpoint{"POST", "/nodes/{node}/apt/update"}
+	epAptVersions   = endpoint{"GET", "/nodes/{node}/apt/versions"}
+
 	epVZDump = endpoint{"POST", "/nodes/{node}/vzdump"}
 
 	// Les jobs de sauvegarde PLANIFIÉS. Ils vivent au niveau CLUSTER, pas au
@@ -202,6 +214,7 @@ var (
 
 // AllEndpoints is what the API-MAP coverage test walks.
 var AllEndpoints = []endpoint{
+	epAptRepos, epAptRepoAdd, epAptRepoChange, epAptUpdates, epAptRefresh, epAptVersions,
 	epVersion,
 	epNodes,
 	epNodeStatus,

@@ -125,6 +125,8 @@ création avec un message qui ne dit pas toujours pourquoi.
 | service demandé mais jamais installé | le tag `svc_<id>` absent de la déclaration | rejouer `vm declare --with …`, puis `iac apply` **avant** `iac configure` |
 | tunnel actif, tout répond 404 | un catch-all ailleurs qu'en dernier dans la table d'ingress | `pvecli cf route ls --tunnel <nom>` ; pvecli le remet en fin, un `config.yml` édité à la main non |
 | le nom public expire au lieu d'échouer | CNAME vers `cfargotunnel.com` **non proxifié** | il n'est joignable qu'à travers Cloudflare ; `proxied` doit rester vrai |
+| `apt update` échoue en 401, plus aucune mise à jour Proxmox | dépôt `pve-enterprise` actif sans abonnement | `pvecli node repo ls`, puis `pvecli node repo no-subscription` |
+| « faut-il mettre le nœud à jour ? » | | `pvecli node updates` (`--sync` pour rafraîchir l'index d'abord). L'installation se fait sur le nœud : `apt full-upgrade`, jamais par l'API |
 | `iac configure --cf-tunnel` : jeton introuvable | le tunnel n'a pas été créé par `pvecli cf tunnel create` | c'est cette commande qui range le jeton au trousseau |
 
 ---
