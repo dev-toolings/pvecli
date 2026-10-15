@@ -173,6 +173,25 @@ func (c *Client) GuestConfig(ctx context.Context, node string, kind GuestType, v
 	return out, nil
 }
 
+// BalloonInfo is the `ballooninfo` block of a QEMU status/current answer.
+type BalloonInfo struct {
+	Actual        int64 `json:"actual"`
+	MaxMem        int64 `json:"max_mem"`
+	MemSwappedOut int64 `json:"mem_swapped_out,omitempty"`
+}
+
+// Squeezed says the balloon holds back part of the guest's memory: the guest
+// runs below the RAM it was configured with.
+func (s *GuestStatus) Squeezed() bool {
+	return s.BalloonInfo != nil && s.BalloonInfo.MaxMem > 0 && s.BalloonInfo.Actual < s.BalloonInfo.MaxMem
+}
+
+// AtBalloonFloor says the guest has been shrunk all the way to its floor:
+// the host can take nothing more from it, and it bears the pressure.
+func (s *GuestStatus) AtBalloonFloor() bool {
+	return s.Squeezed() && s.BalloonMin > 0 && s.BalloonInfo.Actual <= s.BalloonMin
+}
+
 // GuestStatus is GET /nodes/{node}/{kind}/{vmid}/status/current.
 type GuestStatus struct {
 	VMID   int     `json:"vmid"`
@@ -213,6 +232,17 @@ type GuestStatus struct {
 	// back short of inflating the balloon, so this stays near MaxMem even when
 	// the guest considers the page reclaimable. Absent on LXC.
 	MemHost int64 `json:"memhost,omitempty"`
+
+	// BalloonMin is the floor PVE's auto-ballooning may shrink the guest to,
+	// in bytes: the `balloon` config key, present only when it is below
+	// `memory`. Absent means the guest is never shrunk.
+	BalloonMin int64 `json:"balloon_min,omitempty"`
+
+	// BalloonInfo is what the virtio-balloon device reports. Actual is the
+	// RAM the guest is really given right now; when it sits at BalloonMin the
+	// guest has been squeezed to its floor by host memory pressure. Absent on
+	// LXC and on a VM without a balloon device.
+	BalloonInfo *BalloonInfo `json:"ballooninfo,omitempty"`
 
 	// PressureMemorySome and PressureMemoryFull are the cgroup's memory PSI
 	// counters, in percent of time stalled. They are the only fields here that

@@ -18,6 +18,7 @@ func newVMSetCmd() *cobra.Command {
 	var (
 		cores    int
 		memory   int
+		balloon  int
 		name     string
 		tags     string
 		ciUser   string
@@ -34,6 +35,11 @@ func newVMSetCmd() *cobra.Command {
 Seules les clés explicitement passées sont envoyées : une écriture demandée
 n'est jamais élargie (PRD §7.6). --set permet d'écrire n'importe quelle clé de
 l'API directement, sous la forme « clé=valeur ».
+
+--balloon fixe le plancher jusqu'où l'auto-ballooning de PVE peut comprimer
+la VM quand l'hôte dépasse 80 % de mémoire utilisée. Égal à --memory (ou à la
+mémoire configurée), la VM garde toute sa RAM : c'est le réglage d'une VM de
+production. La valeur s'applique à chaud.
 
 Les clés cloud-init ne prennent effet qu'au prochain démarrage : cloud-init lit
 son disque au boot. Un « set » sur une VM qui tourne modifie la configuration,
@@ -70,6 +76,12 @@ Endpoint : PUT /api2/json/nodes/{node}/qemu/{vmid}/config`,
 			}
 			if memory > 0 {
 				params.Set("memory", strconv.Itoa(memory))
+			}
+			if cmd.Flags().Changed("balloon") {
+				if balloon < 0 {
+					return &exitError{code: pve.ExitUsage, msg: "--balloon attend un nombre de Mio positif ou nul"}
+				}
+				params.Set("balloon", strconv.Itoa(balloon))
 			}
 			if name != "" {
 				params.Set("name", name)
@@ -152,6 +164,7 @@ Endpoint : PUT /api2/json/nodes/{node}/qemu/{vmid}/config`,
 	f := c.Flags()
 	f.IntVar(&cores, "cores", 0, "nombre de cœurs")
 	f.IntVar(&memory, "memory", 0, "mémoire en Mio")
+	f.IntVar(&balloon, "balloon", 0, "plancher du ballon en Mio : égal à la mémoire, la VM n'est jamais comprimée ; 0 retire le ballon (au prochain démarrage)")
 	f.StringVar(&name, "name", "", "nom de la VM")
 	f.StringVar(&tags, "tags", "", "tags, séparés par des virgules")
 	f.StringVar(&ciUser, "ci-user", "", "utilisateur cloud-init")

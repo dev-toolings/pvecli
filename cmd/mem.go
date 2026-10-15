@@ -106,6 +106,16 @@ func memoryRows(st *pve.GuestStatus, info pve.Meminfo) output.Rows {
 	add("cache récupérable", output.Bytes(info.Cache()))
 	add("libre au sens strict", output.Bytes(info.Free))
 	add("total vu par l'invité", output.Bytes(info.Total))
+	if st.BalloonInfo != nil {
+		line := output.Bytes(st.BalloonInfo.Actual) + " donnés sur " + output.Bytes(st.BalloonInfo.MaxMem)
+		if st.BalloonMin > 0 {
+			line += ", plancher " + output.Bytes(st.BalloonMin)
+		}
+		if st.AtBalloonFloor() {
+			line += " (atteint : l'hôte manque de mémoire)"
+		}
+		add("ballon", line)
+	}
 
 	if st.MemHost > 0 {
 		add("mémoire hôte", output.Bytes(st.MemHost))

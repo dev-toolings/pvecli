@@ -267,6 +267,9 @@ func guestMemoryCell(st *pve.GuestStatus) string {
 	if st.MemHost > 0 {
 		detail = append(detail, "hôte "+output.Bytes(st.MemHost))
 	}
+	if b := balloonDetail(st); b != "" {
+		detail = append(detail, b)
+	}
 	if p := st.PressureMemorySome; p != nil {
 		line := "pression " + output.Percent(p.Float())
 		// `full` means every task stalled at once, not merely some of them. It
@@ -282,6 +285,22 @@ func guestMemoryCell(st *pve.GuestStatus) string {
 		return cell
 	}
 	return cell + "  (" + strings.Join(detail, " · ") + ")"
+}
+
+// balloonDetail names the RAM the balloon actually leaves the guest when it
+// is below the configured size. Without it the line reads "x / 5.0 GiB" while
+// the guest only has 2.5 GiB: the console's figure is the ceiling, not what
+// the kernel inside sees. "plancher" means the host can take nothing more,
+// and that this guest is the one absorbing the node's pressure.
+func balloonDetail(st *pve.GuestStatus) string {
+	if !st.Squeezed() {
+		return ""
+	}
+	line := "ballon " + output.Bytes(st.BalloonInfo.Actual) + " sur " + output.Bytes(st.BalloonInfo.MaxMem)
+	if st.AtBalloonFloor() {
+		line += ", plancher atteint"
+	}
+	return line
 }
 
 func guestDetailRows(kind pve.GuestType, cfg pve.GuestConfig, st *pve.GuestStatus) output.Rows {
