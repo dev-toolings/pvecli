@@ -607,7 +607,13 @@ func newIaCApplyCmd() *cobra.Command {
 
 Sans --yes, DEUX confirmations sont demandées : celle de pvecli, puis celle de
 terraform. Ce n'est pas une redondance — la première porte sur ce que le
-pré-vol vient d'afficher (dérive comprise), la seconde sur le plan lui-même.` + wrapperNote,
+pré-vol vient d'afficher (dérive comprise), la seconde sur le plan lui-même.
+
+Avant la première, un plan silencieux avec les mêmes arguments liste les VM en
+marche que l'apply va REDÉMARRER : le provider bpg applique un changement de
+memory, cpu et de quelques autres blocs en redémarrant l'invité, alors que le
+plan n'affiche qu'un « update in-place ». C'est un avertissement, jamais un
+refus ; avec --yes il s'affiche quand même.` + wrapperNote,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -645,6 +651,25 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 		return err
 	}
 
+	// The bridge comes up before the confirmation: the reboot check below runs
+	// a plan, and that plan needs the same endpoint the apply will use.
+	var bridgeVars []string
+	tf.Env = terraformEnv(cmd, eff)
+	if terraformNeedsBridge(eff) {
+		bridge, err := startTerraformBridge(eff)
+		if err != nil {
+			return err
+		}
+		defer bridge.Close()
+		tf.Env = bridge.Env(tf.Env)
+		_, _ = fmt.Fprint(cmd.ErrOrStderr(), bridge.Explain(eff))
+		bridgeVars = []string{"-var", "proxmox_endpoint=" + bridge.URL}
+	}
+
+	if verb == "apply" {
+		warnRebootingApply(cmd, tf, bridgeVars, extra)
+	}
+
 	yes, _ := cmd.Flags().GetBool("yes")
 	if confirmFirst && !yes {
 		if err := confirm(cmd, fmt.Sprintf("Lancer « terraform apply » dans %s ?", eff.IaC.TerraformDir)); err != nil {
@@ -656,19 +681,9 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 	if verb == "apply" && yes {
 		opts = append(opts, "-auto-approve")
 	}
-	tf.Env = terraformEnv(cmd, eff)
-	if terraformNeedsBridge(eff) {
-		bridge, err := startTerraformBridge(eff)
-		if err != nil {
-			return err
-		}
-		defer bridge.Close()
-		tf.Env = bridge.Env(tf.Env)
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), bridge.Explain(eff))
-		// Before the operator's own arguments: terraform stops reading flags at
-		// the first positional argument, and « apply <plan> » is one.
-		opts = append(opts, "-var", "proxmox_endpoint="+bridge.URL)
-	}
+	// Before the operator's own arguments: terraform stops reading flags at
+	// the first positional argument, and « apply <plan> » is one.
+	opts = append(opts, bridgeVars...)
 	args := append(opts, extra...)
 
 	// The exact command line, so the operator can rerun it by hand. A wrapper
@@ -684,6 +699,64 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 		return nil
 	}
 	return postflight(cmd, client, eff)
+}
+
+// warnRebootingApply names the running VMs the apply is about to reboot.
+//
+// The bpg provider applies a change to memory, CPU and a few other blocks of a
+// running VM by rebooting it, and `terraform plan` shows only an in-place
+// update. On 2026-10-15 a balloon floor raised this way, which the PVE API
+// would have applied live, took production down for a minute. So the apply is
+// preceded by a silent plan with the same arguments, read back as JSON.
+//
+// It warns and never blocks: the confirmation that follows is where the
+// operator decides, and a check that cannot run (terraform too old, a plan
+// file passed as argument) says so instead of standing in the way.
+func warnRebootingApply(cmd *cobra.Command, tf iac.Tool, bridgeVars, extra []string) {
+	out := cmd.ErrOrStderr()
+	for _, arg := range extra {
+		if !strings.HasPrefix(arg, "-") {
+			_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : un plan enregistré est appliqué tel quel (%s)\n", arg)
+			return
+		}
+	}
+	dir, err := os.MkdirTemp("", "pvecli-plan-")
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : %v\n", err)
+		return
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	planFile := filepath.Join(dir, "apply.tfplan")
+
+	args := append([]string{"plan", "-input=false", "-out=" + planFile}, bridgeVars...)
+	args = append(args, extra...)
+	if err := tf.Run(cmd.Context(), io.Discard, io.Discard, args...); err != nil {
+		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : le plan d'analyse a échoué (%v) ; l'apply le dira\n", err)
+		return
+	}
+	raw, err := tf.Output(cmd.Context(), io.Discard, "show", "-json", planFile)
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : %v\n", err)
+		return
+	}
+	risks, err := iac.RebootRisks(raw)
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : %v\n", err)
+		return
+	}
+	if len(risks) == 0 {
+		_, _ = fmt.Fprintf(out, "  ✓ aucune VM en marche ne sera redémarrée par cet apply\n")
+		return
+	}
+	_, _ = fmt.Fprintf(out, "\n  ⚠ CET APPLY VA REDÉMARRER %d VM EN MARCHE\n", len(risks))
+	_, _ = fmt.Fprintf(out, "    Le plan les montre « update in-place » ; le provider bpg applique ces blocs\n")
+	_, _ = fmt.Fprintf(out, "    en redémarrant l'invité (reboot_after_update). Coupure de service à prévoir.\n")
+	for _, r := range risks {
+		_, _ = fmt.Fprintf(out, "    - %s (VM %d) : %s\n", r.Name, r.VMID, strings.Join(r.Attributes, ", "))
+	}
+	_, _ = fmt.Fprintf(out, "    Pour un plancher de ballon seul, sans redémarrage : « pvecli vm set <vmid> --balloon <Mio>\n")
+	_, _ = fmt.Fprintf(out, "    --force-unmanaged » (l'API l'applique à chaud), puis « pvecli vm declare <nom> --balloon <Mio> » :\n")
+	_, _ = fmt.Fprintf(out, "    le plan suivant ne voit plus de différence, donc plus de redémarrage.\n\n")
 }
 
 func newIaCAdoptCmd() *cobra.Command {
