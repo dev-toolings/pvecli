@@ -27,7 +27,7 @@ func TestNodeMemReportNamesTheVMThatAbsorbsThePressure(t *testing.T) {
 
 	report := buildNodeMemReport(30*gib+800<<20, 25*gib, []nodeMemVM{staging, prod})
 	all := strings.Join(report.Warnings, "\n")
-	for _, want := range []string{"au-dessus des 80", "seules les VM 230", "VM 230 (tools) comprimée à son plancher", "--balloon 5120"} {
+	for _, want := range []string{"au-dessus des 80", "seule la VM 230 a un plancher", "VM 230 (tools) comprimée à son plancher", "--balloon 5120"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("warnings %q do not mention %q", all, want)
 		}

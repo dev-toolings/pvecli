@@ -28,6 +28,7 @@ type VM struct {
 	VMID     int      `json:"vmid"`
 	Cores    int      `json:"cores"`
 	Memory   int      `json:"memory"`
+	Balloon  int      `json:"balloon,omitempty"` // plancher en Mio ; 0 = défaut du module (memory/2)
 	Disk     int      `json:"disk,omitempty"`
 	IP       string   `json:"ip,omitempty"`
 	Gateway  string   `json:"gateway,omitempty"`
@@ -294,6 +295,7 @@ func Diff(before, after *VM) []Change {
 		{"vmid", func(v VM) string { return numOrEmpty(v.VMID) }},
 		{"cores", func(v VM) string { return numOrEmpty(v.Cores) }},
 		{"memory", func(v VM) string { return withUnit(v.Memory, "Mio") }},
+		{"balloon", func(v VM) string { return withUnit(v.Balloon, "Mio") }},
 		{"disk", func(v VM) string { return withUnit(v.Disk, "Gio") }},
 		{"ip", func(v VM) string { return v.IP }},
 		{"gateway", func(v VM) string { return v.Gateway }},

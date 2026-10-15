@@ -247,3 +247,15 @@ func TestDiffOfAnAdditionAndARemoval(t *testing.T) {
 		}
 	}
 }
+
+// Pinning a production VM's floor to its memory is a one-field change the
+// confirmation must spell out: from the module's default (empty) to the value.
+func TestDiffNamesABalloonFloor(t *testing.T) {
+	before := &VM{VMID: 230, Cores: 2, Memory: 5120}
+	after := &VM{VMID: 230, Cores: 2, Memory: 5120, Balloon: 5120}
+
+	got := Diff(before, after)
+	if len(got) != 1 || got[0].Field != "balloon" || got[0].Before != "" || got[0].After != "5120 Mio" {
+		t.Fatalf("Diff = %+v, attendu balloon → 5120 Mio", got)
+	}
+}

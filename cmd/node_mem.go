@@ -85,9 +85,11 @@ func buildNodeMemReport(hostTotal, hostUsed int64, vms []nodeMemVM) nodeMemRepor
 			output.Ratio(float64(hostUsed)/float64(hostTotal)), output.Ratio(autoBalloonThreshold)))
 	}
 	if len(shrinking) > 0 && len(shrinking) < len(report.VMs) {
-		report.Warnings = append(report.Warnings, fmt.Sprintf(
-			"seules les VM %s ont un plancher : elles absorbent toute la pression de l'hôte, les autres ne cèdent rien",
-			strings.Join(shrinking, ", ")))
+		format := "seules les VM %s ont un plancher : elles absorbent toute la pression de l'hôte, les autres ne cèdent rien"
+		if len(shrinking) == 1 {
+			format = "seule la VM %s a un plancher : elle absorbe toute la pression de l'hôte, les autres ne cèdent rien"
+		}
+		report.Warnings = append(report.Warnings, fmt.Sprintf(format, strings.Join(shrinking, ", ")))
 	}
 	for _, vm := range report.VMs {
 		if vm.AtFloor {

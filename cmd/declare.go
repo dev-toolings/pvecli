@@ -14,11 +14,11 @@ import (
 )
 
 type declareOpts struct {
-	vmid, cores, memory, disk, template int
-	ip, gateway, node, user             string
-	with                                []string
-	remove                              bool
-	suggestID                           bool
+	vmid, cores, memory, balloon, disk, template int
+	ip, gateway, node, user                      string
+	with                                         []string
+	remove                                       bool
+	suggestID                                    bool
 }
 
 func newVMDeclareCmd() *cobra.Command {
@@ -41,6 +41,11 @@ existante, c'est donc une seule option :
 
   pvecli vm declare app-01 --memory 16384
   pvecli iac apply
+
+Une production ne doit jamais être comprimée par le ballon quand le nœud
+manque de mémoire : son plancher est sa mémoire.
+
+  pvecli vm declare app-01 --balloon 16384
 
 --with choisit les services du catalogue. Leurs dépendances sont ajoutées
 d'office, et chacun pose un tag « svc_<id> » sur la VM — ce tag est ce que
@@ -65,6 +70,7 @@ retapant le nom.`,
 	f.IntVar(&o.vmid, "vmid", 0, "identifiant PVE de la VM (obligatoire à la création)")
 	f.IntVar(&o.cores, "cores", 0, "nombre de cœurs")
 	f.IntVar(&o.memory, "memory", 0, "mémoire en MIBIOCTETS — 8 Go s'écrit 8192")
+	f.IntVar(&o.balloon, "balloon", 0, "plancher du ballon en Mio, sous lequel PVE ne comprime jamais la VM ; égal à --memory pour une production (défaut : la moitié)")
 	f.IntVar(&o.disk, "disk", 0, "taille du disque en Gio")
 	f.IntVar(&o.template, "template", 0, "vmid du template à cloner (défaut : var.template_vm_id)")
 	f.StringVar(&o.ip, "ip", "", "adresse : dhcp, ou 192.168.1.220/24")
@@ -222,6 +228,7 @@ func buildDeclaration(cmd *cobra.Command, name string, o *declareOpts, before *i
 	set("vmid", func() { vm.VMID = o.vmid })
 	set("cores", func() { vm.Cores = o.cores })
 	set("memory", func() { vm.Memory = o.memory })
+	set("balloon", func() { vm.Balloon = o.balloon })
 	set("disk", func() { vm.Disk = o.disk })
 	set("template", func() { vm.Template = o.template })
 	set("ip", func() { vm.IP = o.ip })

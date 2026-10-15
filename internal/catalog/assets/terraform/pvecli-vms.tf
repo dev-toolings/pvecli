@@ -18,6 +18,7 @@ variable "vms" {
     vmid     = number
     cores    = number
     memory   = number # MIBIOCTETS. 8 Go = 8192. Écrire 8 donne 8 Mio.
+    balloon  = optional(number) # plancher en Mio ; null = la moitié de memory
     disk     = optional(number, 20)
     ip       = optional(string, "dhcp") # "192.0.2.220/24" ou "dhcp"
     gateway  = optional(string)
@@ -66,13 +67,16 @@ resource "proxmox_virtual_environment_vm" "pvecli" {
   # Sans lui, l'hôte ne reprend JAMAIS une page que l'invité a touchée une fois :
   # la jauge Proxmox ne fait que monter — 11,7 Gio affichés pour 2 Gio réellement
   # tenus, le reste étant du cache que le noyau invité rendrait volontiers.
-  # La moitié comme plancher : l'invité garde sa RAM tant que le nœud n'en a pas
-  # besoin, et n'en rend que sous pression. Une VM qui ne doit jamais rendre un
-  # octet (base de données à shared_buffers dimensionnés) veut un plancher égal
-  # à `dedicated`.
+  # La moitié comme plancher par défaut : l'invité garde sa RAM tant que le nœud
+  # n'en a pas besoin, et n'en rend que sous pression. Au-dessus de 80 % de
+  # mémoire utilisée sur le nœud, PVE ramène les VM vers ce plancher. Une VM qui
+  # ne doit jamais rendre un octet (production, base de données à
+  # shared_buffers dimensionnés) déclare `balloon` égal à `memory` :
+  # `pvecli vm declare <nom> --balloon <memory>`. Le 2026-10-15, la production
+  # OpenTrack (VM 230, 5 Gio) tournait à 2,5 Gio sans qu'on le sache.
   memory {
     dedicated = each.value.memory
-    floating  = floor(each.value.memory / 2)
+    floating  = coalesce(each.value.balloon, floor(each.value.memory / 2))
   }
 
   # Sans l'agent, Terraform attend une adresse que personne ne peut donner :
