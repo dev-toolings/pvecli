@@ -27,6 +27,9 @@ type Tool struct {
 	Dir string
 	// Env is appended to the inherited environment.
 	Env []string
+	// Stdin feeds the tool's own prompts. Nil leaves it closed, which makes
+	// an interactive terraform apply fail on "error asking for approval: EOF".
+	Stdin io.Reader
 }
 
 // installHints says how to get each tool, because "command not found" is a
@@ -132,6 +135,7 @@ func (t Tool) command(ctx context.Context, args ...string) *exec.Cmd {
 	c := exec.CommandContext(ctx, t.Name, args...) //nolint:gosec // t.Name is a package constant, not user input
 	c.Dir = t.Dir
 	c.Env = append(os.Environ(), t.Env...)
+	c.Stdin = t.Stdin
 	return c
 }
 

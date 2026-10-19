@@ -612,8 +612,9 @@ pré-vol vient d'afficher (dérive comprise), la seconde sur le plan lui-même.
 Avant la première, un plan silencieux avec les mêmes arguments liste les VM en
 marche que l'apply va REDÉMARRER : le provider bpg applique un changement de
 memory, cpu et de quelques autres blocs en redémarrant l'invité, alors que le
-plan n'affiche qu'un « update in-place ». C'est un avertissement, jamais un
-refus ; avec --yes il s'affiche quand même.` + wrapperNote,
+plan n'affiche qu'un « update in-place ». En interactif c'est un avertissement :
+la confirmation qui suit décide. Avec --yes, personne ne le lit : l'apply est
+refusé tant que --allow-reboot ne dit pas que la coupure est voulue.` + wrapperNote,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -625,6 +626,7 @@ refus ; avec --yes il s'affiche quand même.` + wrapperNote,
 		},
 	}
 	addWriteFlags(c)
+	c.Flags().Bool("allow-reboot", false, "avec --yes, accepte que l'apply redémarre des VM en marche")
 	return c
 }
 
@@ -666,11 +668,21 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 		bridgeVars = []string{"-var", "proxmox_endpoint=" + bridge.URL}
 	}
 
+	yes, _ := cmd.Flags().GetBool("yes")
 	if verb == "apply" {
-		warnRebootingApply(cmd, tf, bridgeVars, extra)
+		rebooting := warnRebootingApply(cmd, tf, bridgeVars, extra)
+		// --yes means nobody reads the warning above. On 2026-10-19 a balloon
+		// floor applied with --yes rebooted the preprod VM mid-session.
+		if allow, _ := cmd.Flags().GetBool("allow-reboot"); yes && rebooting > 0 && !allow {
+			return &exitError{
+				code: pve.ExitConfirm,
+				msg: fmt.Sprintf("apply refusé : --yes redémarrerait %d VM en marche.\n"+
+					"Relance sans --yes pour confirmer, ajoute --allow-reboot si la coupure est voulue,\n"+
+					"ou applique le changement à chaud comme indiqué ci-dessus.", rebooting),
+			}
+		}
 	}
 
-	yes, _ := cmd.Flags().GetBool("yes")
 	if confirmFirst && !yes {
 		if err := confirm(cmd, fmt.Sprintf("Lancer « terraform apply » dans %s ?", eff.IaC.TerraformDir)); err != nil {
 			return err
@@ -681,6 +693,8 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 	if verb == "apply" && yes {
 		opts = append(opts, "-auto-approve")
 	}
+	// Without --yes terraform asks its own question; it needs the terminal.
+	tf.Stdin = cmd.InOrStdin()
 	// Before the operator's own arguments: terraform stops reading flags at
 	// the first positional argument, and « apply <plan> » is one.
 	opts = append(opts, bridgeVars...)
@@ -712,18 +726,18 @@ func runTerraform(cmd *cobra.Command, verb string, extra []string, confirmFirst 
 // It warns and never blocks: the confirmation that follows is where the
 // operator decides, and a check that cannot run (terraform too old, a plan
 // file passed as argument) says so instead of standing in the way.
-func warnRebootingApply(cmd *cobra.Command, tf iac.Tool, bridgeVars, extra []string) {
+func warnRebootingApply(cmd *cobra.Command, tf iac.Tool, bridgeVars, extra []string) int {
 	out := cmd.ErrOrStderr()
 	for _, arg := range extra {
 		if !strings.HasPrefix(arg, "-") {
 			_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : un plan enregistré est appliqué tel quel (%s)\n", arg)
-			return
+			return 0
 		}
 	}
 	dir, err := os.MkdirTemp("", "pvecli-plan-")
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : %v\n", err)
-		return
+		return 0
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	planFile := filepath.Join(dir, "apply.tfplan")
@@ -732,21 +746,21 @@ func warnRebootingApply(cmd *cobra.Command, tf iac.Tool, bridgeVars, extra []str
 	args = append(args, extra...)
 	if err := tf.Run(cmd.Context(), io.Discard, io.Discard, args...); err != nil {
 		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : le plan d'analyse a échoué (%v) ; l'apply le dira\n", err)
-		return
+		return 0
 	}
 	raw, err := tf.Output(cmd.Context(), io.Discard, "show", "-json", planFile)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : %v\n", err)
-		return
+		return 0
 	}
 	risks, err := iac.RebootRisks(raw)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  · redémarrages non vérifiés : %v\n", err)
-		return
+		return 0
 	}
 	if len(risks) == 0 {
 		_, _ = fmt.Fprintf(out, "  ✓ aucune VM en marche ne sera redémarrée par cet apply\n")
-		return
+		return 0
 	}
 	_, _ = fmt.Fprintf(out, "\n  ⚠ CET APPLY VA REDÉMARRER %d VM EN MARCHE\n", len(risks))
 	_, _ = fmt.Fprintf(out, "    Le plan les montre « update in-place » ; le provider bpg applique ces blocs\n")
@@ -757,6 +771,7 @@ func warnRebootingApply(cmd *cobra.Command, tf iac.Tool, bridgeVars, extra []str
 	_, _ = fmt.Fprintf(out, "    Pour un plancher de ballon seul, sans redémarrage : « pvecli vm set <vmid> --balloon <Mio>\n")
 	_, _ = fmt.Fprintf(out, "    --force-unmanaged » (l'API l'applique à chaud), puis « pvecli vm declare <nom> --balloon <Mio> » :\n")
 	_, _ = fmt.Fprintf(out, "    le plan suivant ne voit plus de différence, donc plus de redémarrage.\n\n")
+	return len(risks)
 }
 
 func newIaCAdoptCmd() *cobra.Command {

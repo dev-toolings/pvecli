@@ -268,6 +268,11 @@ func runInstallHook(out io.Writer, rc, snippetPath string) error {
 	if err := os.WriteFile(snippetPath, []byte(updateNotifySnippet), 0o755); err != nil {
 		return fmt.Errorf("écriture de %s : %w", snippetPath, err)
 	}
+	// WriteFile's mode goes through the umask (077 on this workstation gave
+	// 0700); the snippet's contract is 0755 whatever the shell's umask.
+	if err := os.Chmod(snippetPath, 0o755); err != nil {
+		return fmt.Errorf("droits de %s : %w", snippetPath, err)
+	}
 
 	existing, err := os.ReadFile(rc)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
