@@ -127,6 +127,9 @@ création avec un message qui ne dit pas toujours pourquoi.
 | le nom public expire au lieu d'échouer | CNAME vers `cfargotunnel.com` **non proxifié** | il n'est joignable qu'à travers Cloudflare ; `proxied` doit rester vrai |
 | `apt update` échoue en 401, plus aucune mise à jour Proxmox | dépôt `pve-enterprise` actif sans abonnement | `pvecli node repo ls`, puis `pvecli node repo no-subscription` |
 | « faut-il mettre le nœud à jour ? » | | `pvecli node updates` (`--sync` pour rafraîchir l'index d'abord). L'installation se fait sur le nœud : `apt full-upgrade`, jamais par l'API |
+| `iac apply` affiche « update in-place » sur `memory` / `cpu` et la VM redémarre | le provider bpg applique ces blocs avec `reboot_after_update` | lire l'avertissement « ⚠ CET APPLY VA REDÉMARRER ». Un plancher de ballon seul passe à chaud : `pvecli vm set <vmid> --balloon <Mio> --force-unmanaged`, puis `pvecli vm declare <nom> --balloon <Mio>`. `--yes` refuse un apply qui redémarre tant que `--allow-reboot` ne dit pas que la coupure est voulue |
+| un garde-fou mémoire (Shuttle, Swarm) refuse un déploiement sur une VM déclarée à 8 Gio | le nœud est surengagé et le ballon tient la VM à son plancher (défaut : la moitié de `memory`) | `pvecli vm show <vmid>` (« plancher atteint »), `pvecli node show` ; libérer de la RAM sur le nœud ou relever le `balloon` de la VM |
+| `iac plan` / `apply` bloqué sur « Refreshing state… » d'une VM | le `qemu-guest-agent` de cet invité tourne mais ne répond plus ; le provider attend ~15 min | `pvecli vm agent ifaces <vmid>` échoue vite sur la coupable ; `sudo systemctl restart qemu-guest-agent` dedans, sans redémarrer la VM |
 | `iac configure --cf-tunnel` : jeton introuvable | le tunnel n'a pas été créé par `pvecli cf tunnel create` | c'est cette commande qui range le jeton au trousseau |
 
 ---
