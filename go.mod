@@ -2,6 +2,8 @@ module github.com/dev-toolings/pvecli
 
 go 1.26.4
 
+toolchain go1.27.3
+
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/spf13/cobra v1.10.2
