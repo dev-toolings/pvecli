@@ -361,9 +361,8 @@ comprise, exige Sys.Modify, comme --sync. Sans ce privilège, la commande ne
 plante pas : elle répond sur les paquets Proxmox et le dit (« partiel »).
 
 CE QUE LA COMMANDE NE FAIT PAS : installer. L'API n'expose pas « apt
-full-upgrade », et c'est voulu. Sur le nœud :
-
-  apt update && apt full-upgrade          (jamais « apt upgrade » sur PVE)
+full-upgrade ». L'installation est « pvecli node upgrade » (SSH, puis
+« apt full-upgrade » sur le nœud, jamais « apt upgrade »).
 
 POUR UN SCRIPT, --exit-code : 0 à jour, 10 mises à jour disponibles,
 11 redémarrage requis (prioritaire). Les erreurs gardent leurs codes (1 à 5).
@@ -571,9 +570,9 @@ func updatesRows(rep aptcheck.Report, all bool) output.Rows {
 
 func updatesAdvice(rep aptcheck.Report) string {
 	var b strings.Builder
-	b.WriteString("à faire, sur le nœud :\n")
+	b.WriteString("à faire :\n")
 	if rep.UpdatesAvailable() {
-		b.WriteString("  apt update && apt full-upgrade      (jamais « apt upgrade » sur PVE)\n")
+		b.WriteString("  pvecli node upgrade\n")
 	}
 	if rep.RebootRequired() || rep.KernelUpdate {
 		b.WriteString("  puis : pvecli node reboot " + rep.Node + "   (vérifie onboot=1 sur les invités avant)\n")

@@ -60,13 +60,16 @@ func TestNodeUpdatesExitCodeAndCache(t *testing.T) {
 	})
 	point(t, srv.URL)
 
-	stdout, _, err := run(t, "node", "updates", "pve", "--exit-code")
+	stdout, stderr, err := run(t, "node", "updates", "pve", "--exit-code")
 	var coded interface{ ExitCode() int }
 	if !errors.As(err, &coded) || coded.ExitCode() != exitUpdatesAvailable {
 		t.Fatalf("err = %v, want code %d", err, exitUpdatesAvailable)
 	}
 	if !strings.Contains(stdout, "139 mise(s) à jour") || !strings.Contains(stdout, "9.2.6 → 9.2.21") {
 		t.Errorf("stdout :\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "pvecli node upgrade") {
+		t.Errorf("le conseil doit pointer vers node upgrade :\n%s", stderr)
 	}
 
 	// La commande a rempli le cache : --notify le lit sans réseau.

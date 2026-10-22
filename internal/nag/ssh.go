@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -47,21 +48,42 @@ func (s SSH) Look() error {
 func (s SSH) Runner() Runner {
 	return func(ctx context.Context, script string) (string, error) {
 		var stdout, stderr bytes.Buffer
-
-		c := exec.CommandContext(ctx, "ssh",
-			"-o", "BatchMode=yes",
-			"-o", "ConnectTimeout=10",
-			s.Target(), "sh", "-s")
-		c.Stdin = strings.NewReader(script)
-		c.Stdout, c.Stderr = &stdout, &stderr
-		c.Env = os.Environ()
-
-		err := c.Run()
-		if err == nil {
-			return stdout.String(), nil
-		}
-		return stdout.String(), s.failure(err, stderr.String())
+		err := s.Run(ctx, script, &stdout, &stderr)
+		return stdout.String(), err
 	}
+}
+
+// Run executes script on the node and copies both streams as they arrive.
+//
+// Runner buffers them, which is right for a short patch. An apt full-upgrade
+// takes minutes and writes its progress as it goes: waiting until the end
+// would look exactly like a hung command. ServerAlive keeps a long, quiet
+// dpkg postinst from being cut by a NAT that drops idle TCP.
+func (s SSH) Run(ctx context.Context, script string, stdout, stderr io.Writer) error {
+	var errBuf bytes.Buffer
+	errOut := io.Writer(&errBuf)
+	if stderr != nil {
+		errOut = io.MultiWriter(&errBuf, stderr)
+	}
+	if stdout == nil {
+		stdout = io.Discard
+	}
+
+	c := exec.CommandContext(ctx, "ssh",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=40",
+		s.Target(), "sh", "-s")
+	c.Stdin = strings.NewReader(script)
+	c.Stdout = stdout
+	c.Stderr = errOut
+	c.Env = os.Environ()
+
+	if err := c.Run(); err != nil {
+		return s.failure(err, errBuf.String())
+	}
+	return nil
 }
 
 // failure turns ssh's terse exit into something actionable.

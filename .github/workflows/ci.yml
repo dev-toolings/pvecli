@@ -63,14 +63,15 @@ jobs:
       #   · la v6 de l'action installe golangci-lint 1.x, qui ne comprend pas un
       #     .golangci.yml en schéma v2 — « can't load config » ;
       #   · golangci-lint refuse de tourner s'il a été compilé avec un Go plus
-      #     ancien que celui visé par go.mod (ici 1.26.4). « latest » côté action
+      #     ancien que celui visé par go.mod (ici toolchain go1.27.3, donc une
+      #     version compilée en go1.27 au moins). « latest » côté action
       #     ne veut donc pas dire « compatible ».
       #
       # Épingler la même version qu'en local est le seul moyen que « make lint »
       # veuille dire la même chose des deux côtés.
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
           args: --timeout=5m
 
       - name: Lint

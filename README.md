@@ -143,16 +143,28 @@ curl -fsSL https://raw.githubusercontent.com/dev-toolings/pvecli/main/install.sh
 It detects the platform, resolves the latest release, **verifies the SHA-256
 before installing**, moves the binary into `~/.local/bin` and installs the
 [AI agent](#ai-agent). A checksum that does not match aborts the install and
-leaves nothing behind — an installer piped into a shell runs code that arrived
+leaves nothing behind. An installer piped into a shell runs code that arrived
 over the network, and the least it owes you is proof that the byte on your disk
 is the byte that was published.
+
+On a terminal, when no configuration file exists yet (`$PVECLI_CONFIG`,
+otherwise `$XDG_CONFIG_HOME/pvecli/config.yaml`, otherwise
+`~/.config/pvecli/config.yaml`), the script then offers the first
+configuration: API address, node name, TLS (pin the certificate, or set
+`tls.server_name` when that name is not the address), then either an existing
+token or `pvecli login`, then `pvecli doctor`. Questions are read from
+`/dev/tty`, because `curl | sh` has already consumed standard input. An
+existing file is left untouched. `PVECLI_NO_SETUP=1` skips the offer and
+prints the commands. A run with `PVECLI_ONLY_IF_NEWER=1` (the daily timer)
+never asks.
 
 | Variable | Effect |
 | --- | --- |
 | `PVECLI_VERSION` | pin a version instead of the latest |
 | `PREFIX` | install root (default `~/.local` → `~/.local/bin`) |
 | `PVECLI_NO_AGENT=1` | skip the Claude Code agent |
-| `PVECLI_ONLY_IF_NEWER=1` | do nothing if that version is already installed |
+| `PVECLI_NO_SETUP=1` | install only: do not offer the first configuration |
+| `PVECLI_ONLY_IF_NEWER=1` | do nothing if that version is already installed; never offer setup |
 
 ### Staying up to date
 
@@ -312,9 +324,14 @@ to avoid — create a dedicated one instead. `pvecli login` does it for you: it
 trades a password for a ticket (`POST /access/ticket`, the same call the web UI
 makes), and uses that ticket to create the user, the token and its ACL.
 
+The GitHub installer walks through this sequence on a terminal when no
+configuration file exists yet. The commands below are the same path, by hand.
+
 ```sh
 pvecli config init --endpoint https://pve.example:8006 --node pve
-pvecli config trust     # pin the certificate — stronger than --insecure, costs one command
+pvecli config trust     # pin the certificate. Stronger than --insecure, costs one command
+# when the certificate name is not the address (Tailscale, ACME), instead of trust:
+# pvecli config set tls.server_name pve.example.ts.net
 pvecli login --user root@pam
 # → the token secret is printed ONCE. PVE does not store it in clear and will
 #   never show it again.
@@ -770,8 +787,24 @@ package that changes **major** version, which usually means a repository points
 at the next series. Listing the full set of pending updates takes `Sys.Modify`
 (`GET /apt/update`); without it the command falls back to the Proxmox packages
 of `/apt/versions` (`Sys.Audit`) and says the answer is partial. It never
-installs anything: on the node, `apt update && apt full-upgrade`, never
-`apt upgrade`.
+installs anything. Installation is `pvecli node upgrade`.
+
+```sh
+pvecli node upgrade --dry-run     # the exact script, no SSH call, no API call
+pvecli node upgrade               # apt full-upgrade over SSH, then the onboot list
+pvecli node upgrade --reboot      # same, and reboot only if a newer kernel is installed
+```
+
+The API still has no `full-upgrade` endpoint (`POST /apt/update` is only
+`apt-get update`), so the command uses the same SSH path as `node nag`: your
+`ssh`, `BatchMode`, the script on stdin. It runs `apt-get full-upgrade`, never
+`apt upgrade`, and keeps configuration files you already changed. It does not
+reboot on its own. When a newer kernel is on disk it prints which running
+guests lack `onboot=1` (they stay down) and which stopped guests have
+`onboot=1` (they will start). `--reboot` reboots only in that kernel case,
+after that list, and waits for an uptime that falls, the same proof as
+`node reboot`. `pvecli upgrade` with no `node` replaces this binary. It does
+not touch the node.
 
 ## Configuration
 

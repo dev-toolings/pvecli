@@ -27,7 +27,7 @@ toutes les autres commandes exigeront.`,
 		Args: usage(cobra.NoArgs),
 	}
 	c.AddCommand(newNodeListCmd(), newNodeShowCmd(), newNodeMemCmd(), newNodeRebootCmd(), newNodeNagCmd(),
-		newNodeRepoCmd(), newNodeUpdatesCmd())
+		newNodeRepoCmd(), newNodeUpdatesCmd(), newNodeUpgradeCmd())
 	return c
 }
 
