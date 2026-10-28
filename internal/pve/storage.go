@@ -2,6 +2,7 @@ package pve
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/url"
 )
@@ -59,6 +60,29 @@ type Volume struct {
 	VMID    int    `json:"vmid,omitempty"`
 	CTime   int64  `json:"ctime,omitempty"`
 	Notes   string `json:"notes,omitempty"`
+}
+
+// UnmarshalJSON accepts PVE's numbers as JSON numbers or numeric strings.
+// On 2026-10-28, `pvecli storage content local-lvm` failed on the whole
+// listing with "json: cannot unmarshal string into Go struct field .0.ctime
+// of type int64": the API typed ctime as a string for one volume, the same
+// drift flexInt already absorbs for access tokens. size, used and vmid get the
+// same treatment, since they come from the same untyped source.
+func (v *Volume) UnmarshalJSON(raw []byte) error {
+	type plain Volume
+	var aux struct {
+		plain
+		Size  flexInt `json:"size,omitempty"`
+		Used  flexInt `json:"used,omitempty"`
+		VMID  flexInt `json:"vmid,omitempty"`
+		CTime flexInt `json:"ctime,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &aux); err != nil {
+		return err
+	}
+	*v = Volume(aux.plain)
+	v.Size, v.Used, v.VMID, v.CTime = aux.Size.Int(), aux.Used.Int(), int(aux.VMID.Int()), aux.CTime.Int()
+	return nil
 }
 
 // StorageContent lists what a storage holds, optionally filtered by content
